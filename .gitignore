@@ -1,17 +1,33 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+*.egg-info/
+*.egg
+
+# Build
 build/
 dist/
-*.egg-info/
-.eggs/
-*.egg
+
+# Virtual environments
 .pixi/
 .venv/
+venv/
 
-# pixi environments
-.pixi
-*.egg-info
+# Type checking
+.mypy_cache/
 .dmypy.json
+
+# Linting
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
