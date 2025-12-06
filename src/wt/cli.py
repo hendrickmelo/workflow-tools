@@ -224,8 +224,8 @@ def list_branches(repo_root: Path, include_remote: bool = True) -> list[str]:
         return []
 
     branches: list[str] = []
-    for branch in result.split("\n"):
-        branch = branch.strip()
+    for line in result.split("\n"):
+        branch = line.strip()
         if branch and "HEAD" not in branch:
             branches.append(branch)
 
@@ -306,6 +306,7 @@ def fetch_origin(repo_root: Path) -> bool:
     click.echo(style_info("Fetching from origin..."))
     result = subprocess.run(
         ["git", "fetch", "origin"],
+        check=False,
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -333,12 +334,11 @@ def prompt_base_branch(repo_root: Path) -> str | None:
     if index == 0:
         # Use remote version of default branch for latest commits
         return f"origin/{default_branch}"
-    elif index == 1:
+    if index == 1:
         return "HEAD"
-    else:
-        # Pick from all branches (includes remotes)
-        all_branches = list_branches(repo_root)
-        return select_from_menu("Select base branch", all_branches)
+    # Pick from all branches (includes remotes)
+    all_branches = list_branches(repo_root)
+    return select_from_menu("Select base branch", all_branches)
 
 
 def prompt_fork_base(repo_root: Path) -> str | None:
@@ -357,15 +357,14 @@ def prompt_fork_base(repo_root: Path) -> str | None:
 
     if index == 0:
         return "HEAD"
-    elif index == 1:
+    if index == 1:
         # Fetch and use remote version for latest commits
         fetch_origin(repo_root)
         return f"origin/{default_branch}"
-    else:
-        # Pick from all branches (includes remotes)
-        fetch_origin(repo_root)
-        all_branches = list_branches(repo_root)
-        return select_from_menu("Select base branch", all_branches)
+    # Pick from all branches (includes remotes)
+    fetch_origin(repo_root)
+    all_branches = list_branches(repo_root)
+    return select_from_menu("Select base branch", all_branches)
 
 
 def select_branch_interactive(repo_root: Path) -> tuple[str, bool] | None:
@@ -392,9 +391,8 @@ def select_branch_interactive(repo_root: Path) -> tuple[str, bool] | None:
             run_git("branch", branch_name, base, cwd=repo_root)
             return (branch_name, False)  # Branch exists now, no need for -b
         return (branch_name, True)
-    else:
-        # Return actual branch name
-        return (branches[index - len(special_opts)], False)
+    # Return actual branch name
+    return (branches[index - len(special_opts)], False)
 
 
 def create_worktree(
@@ -422,6 +420,7 @@ def create_worktree(
 
     result = subprocess.run(
         ["git", *args],
+        check=False,
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -431,8 +430,7 @@ def create_worktree(
         click.echo(style_success(f"Created worktree '{name}'"))
         click.echo(style_dim(f"  {worktree_path}"))
         return worktree_path
-    else:
-        click.echo(style_error(f"Failed to create worktree: {result.stderr}"), err=True)
+    click.echo(style_error(f"Failed to create worktree: {result.stderr}"), err=True)
     return None
 
 
@@ -546,6 +544,7 @@ def pr(name: str | None) -> None:
     click.echo(style_info(f"Fetching PR #{selected_pr.number}..."))
     subprocess.run(
         ["gh", "pr", "checkout", str(selected_pr.number), "--detach"],
+        check=False,
         capture_output=True,
     )
 
@@ -709,7 +708,7 @@ def do_remove_worktree(
     args.append(str(worktree_path))
 
     result = subprocess.run(
-        ["git", *args], cwd=repo_root, capture_output=True, text=True
+        ["git", *args], check=False, cwd=repo_root, capture_output=True, text=True
     )
 
     if result.returncode == 0:
@@ -718,9 +717,8 @@ def do_remove_worktree(
         if in_removed_worktree:
             output_cd(repo_root)
         return True
-    else:
-        click.echo(style_error(f"Failed to remove: {result.stderr}"), err=True)
-        return False
+    click.echo(style_error(f"Failed to remove: {result.stderr}"), err=True)
+    return False
 
 
 @cli.command()
@@ -813,7 +811,7 @@ def claude(name: str | None) -> None:
             sys.exit(1)
 
     click.echo(style_info(f"Opening Claude in {worktree_path}..."))
-    subprocess.run(["claude"], cwd=worktree_path)
+    subprocess.run(["claude"], check=False, cwd=worktree_path)
 
 
 @cli.command()
@@ -1084,26 +1082,23 @@ def cleanup() -> None:
             result = run_git("branch", "-d", branch_to_delete, cwd=repo_root)
             if result is not None:
                 click.echo(style_success(f"Deleted branch '{branch_to_delete}'"))
-            else:
-                # Try force delete if normal delete fails
-                if click.confirm(
-                    style_warn(
-                        f"Branch '{branch_to_delete}' is not fully merged. Force delete?"
-                    ),
-                    default=False,
-                ):
-                    result = run_git("branch", "-D", branch_to_delete, cwd=repo_root)
-                    if result is not None:
-                        click.echo(
-                            style_success(f"Force deleted branch '{branch_to_delete}'")
-                        )
-                    else:
-                        click.echo(
-                            style_error(
-                                f"Failed to delete branch '{branch_to_delete}'"
-                            ),
-                            err=True,
-                        )
+            # Try force delete if normal delete fails
+            elif click.confirm(
+                style_warn(
+                    f"Branch '{branch_to_delete}' is not fully merged. Force delete?"
+                ),
+                default=False,
+            ):
+                result = run_git("branch", "-D", branch_to_delete, cwd=repo_root)
+                if result is not None:
+                    click.echo(
+                        style_success(f"Force deleted branch '{branch_to_delete}'")
+                    )
+                else:
+                    click.echo(
+                        style_error(f"Failed to delete branch '{branch_to_delete}'"),
+                        err=True,
+                    )
 
 
 # Short aliases for frequently used commands

@@ -5,8 +5,9 @@
 
 ## Commands
 ```bash
-pixi run lint      # Run ruff, black --check, mypy
-pixi run fix       # Auto-fix with ruff and black
+pixi run cleanup   # Auto-fix: black, ruff --fix, mypy (daemon)
+pixi run lint      # Check only: black --check, ruff, mypy
+pixi run ci        # CI checks (same as lint)
 pixi run build     # Build wheel
 pixi run install   # Build binary and install to ~/.local/bin
 pixi run clean     # Remove build artifacts
@@ -17,7 +18,7 @@ pixi run clean     # Remove build artifacts
 - Use `click.style()` for colored output (see `style_*` helpers)
 - Use `InquirerPy.inquirer.fuzzy` for interactive selection with fuzzy search
 - Prefer `NamedTuple` for data classes
-- Run `pixi run fix` before committing
+- Run `pixi run cleanup` before committing
 
 ## Architecture
 - `src/wt/cli.py` - Single module with all commands

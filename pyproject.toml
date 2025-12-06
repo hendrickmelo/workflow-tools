@@ -37,9 +37,26 @@ select = [
     "B",      # flake8-bugbear
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
+    "PL",     # pylint
+    "DTZ",    # flake8-datetimez
+    "RUF",    # ruff-specific rules
+    "FURB",   # refurb
+    "PERF",   # perflint
+    "RET",    # flake8-return
+    "SLF",    # flake8-self
+    "SLOT",   # flake8-slots
+    "TC",     # flake8-type-checking
+    "PT",     # flake8-pytest-style
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
 ]
 ignore = [
-    "E501",   # line too long (black handles this)
+    "E501",     # line too long (black handles this)
+    "PLR0912",  # too-many-branches
+    "PLR0915",  # too-many-statements
+    "PLR0913",  # too-many-arguments
+    "TC001",    # type-checking block
+    "TC003",    # type-checking block - standard library
 ]
 
 [tool.mypy]
@@ -48,6 +65,10 @@ strict = true
 warn_return_any = true
 warn_unused_ignores = true
 disallow_untyped_defs = true
+warn_redundant_casts = true
+warn_no_return = true
+warn_unreachable = true
+enable_error_code = ["unused-awaitable"]
 
 [[tool.mypy.overrides]]
 module = "InquirerPy.*"
@@ -56,7 +77,7 @@ ignore_missing_imports = true
 # Pixi
 [tool.pixi.project]
 channels = ["conda-forge"]
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.pypi-dependencies]
 wt = { path = ".", editable = true }
@@ -72,15 +93,22 @@ mypy = ">=1.19.0,<2"
 inquirerpy = ">=0.3.4,<0.4"
 
 [tool.pixi.tasks]
-# Linting
-lint = { cmd = "ruff check src && black --check src && mypy src", description = "Run all linters" }
-ruff-check = { cmd = "ruff check src", description = "Run ruff linter" }
-black-check = { cmd = "black --check src", description = "Check black formatting" }
-typecheck = { cmd = "mypy src", description = "Run mypy type checker" }
-
-# Auto-fix
-fix = { cmd = "ruff check --fix src && black src", description = "Auto-fix linting issues" }
+# Formatting
 fmt = { cmd = "black src", description = "Format code with black" }
+fmt-check = { cmd = "black --check src", description = "Check black formatting" }
+
+# Linting
+ruff-fix = { cmd = "ruff check --fix src", depends-on = ["fmt"], description = "Run ruff with auto-fix" }
+ruff-check = { cmd = "ruff check src", description = "Check ruff linting" }
+
+# Type checking
+typecheck = { cmd = "dmypy run src", description = "Run mypy (daemon)" }
+typecheck-ci = { cmd = "mypy src", description = "Run mypy (full check)" }
+
+# Combined tasks
+cleanup = { depends-on = ["fmt", "ruff-fix", "typecheck"], description = "Run all linters with auto-fix" }
+lint = { depends-on = ["fmt-check", "ruff-check", "typecheck-ci"], description = "Check all linters (no fix)" }
+ci = { depends-on = ["lint"], description = "Run CI checks" }
 
 # Build
 build = { cmd = "pip wheel . -w dist --no-deps", description = "Build wheel" }
