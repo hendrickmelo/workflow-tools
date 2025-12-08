@@ -93,13 +93,16 @@ def install(shell: str, *, print_only: bool) -> None:
     # Determine config file
     home = Path.home()
     config_file = home / ".zshrc" if shell == "zsh" else home / ".bashrc"
-    install_line = 'eval "$(workflow-tools install --print)"'
+    # Ensure ~/.local/bin is in PATH before running workflow-tools
+    install_block = """# workflow-tools shell integration
+export PATH="$HOME/.local/bin:$PATH"
+eval "$(workflow-tools install --print)\""""
 
     # Check if already installed
     source_cmd = f"source {config_file}"
     if config_file.exists():
         content = config_file.read_text()
-        if install_line in content:
+        if "workflow-tools install --print" in content:
             click.echo(style_info(f"Already installed in {config_file}"))
             click.echo(style_dim(f"  Restart your shell or run: {source_cmd}"))
             if copy_to_clipboard(source_cmd):
@@ -108,7 +111,7 @@ def install(shell: str, *, print_only: bool) -> None:
 
     # Append to config
     with config_file.open("a") as f:
-        f.write(f"\n# workflow-tools shell integration\n{install_line}\n")
+        f.write(f"\n{install_block}\n")
 
     click.echo(style_success(f"Installed to {config_file}"))
     click.echo(style_dim(f"  Restart your shell or run: {source_cmd}"))

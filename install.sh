@@ -12,11 +12,13 @@ case "$(uname -s)" in
     *) error "Unsupported platform: $(uname -s)" ;;
 esac
 
+# Ensure ~/.local/bin is in PATH
+export PATH="$HOME/.local/bin:$PATH"
+
 # Install uv if not present
 if ! command -v uv &>/dev/null; then
     info "Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
 fi
 
 # Install workflow-tools
@@ -27,4 +29,11 @@ uv tool install "git+https://github.com/${REPO}" --force
 info "Setting up shell integration..."
 workflow-tools install
 
-info "Done! Restart your shell or run: source ~/.zshrc"
+# Determine shell rc file for message
+case "${SHELL:-}" in
+    */zsh)  RC_FILE=~/.zshrc ;;
+    */bash) RC_FILE=~/.bashrc ;;
+    *)      RC_FILE="your shell rc file" ;;
+esac
+
+info "Done! Restart your shell or run: source $RC_FILE"
