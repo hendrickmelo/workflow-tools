@@ -1,0 +1,103 @@
+"""Shell integration utilities for workflow tools."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+import click
+
+# Shell integration marker for cd
+CD_MARKER = "Switching to "
+
+
+def output_cd(path: Path, env_var: str = "WT_CD_FILE") -> None:
+    """Write path to CD file for shell wrapper to handle directory change.
+
+    Args:
+        path: The path to change to
+        env_var: Environment variable containing the CD file path
+    """
+    cd_file = os.environ.get(env_var)
+    if cd_file:
+        Path(cd_file).write_text(str(path))
+    click.echo(f"{CD_MARKER}{path}")
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text to clipboard. Returns True on success, False if unavailable."""
+    # Try platform-specific clipboard commands
+    clipboard_commands = [
+        ["pbcopy"],  # macOS
+        ["xclip", "-selection", "clipboard"],  # Linux with xclip
+        ["xsel", "--clipboard", "--input"],  # Linux with xsel
+        ["clip"],  # Windows
+    ]
+
+    for cmd in clipboard_commands:
+        try:
+            subprocess.run(
+                cmd,
+                input=text.encode(),
+                check=True,
+                capture_output=True,
+            )
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+
+    return False
+
+
+# Shell wrapper scripts
+SHELL_WRAPPER_TEMPLATE_ZSH = """
+# {tool_name} shell integration
+export {env_var}="${{TMPDIR:-/tmp}}.{tool_name}_cd_$$"
+
+{tool_name}() {{
+    rm -f "${env_var}"
+    "${{{bin_var}:-$HOME/.local/bin/{tool_name}}}" "$@"
+    local exit_code=$?
+
+    if [[ -f "${env_var}" ]]; then
+        cd "$(cat "${env_var}")"
+        rm -f "${env_var}"
+    fi
+
+    return $exit_code
+}}
+"""
+
+SHELL_WRAPPER_TEMPLATE_BASH = """
+# {tool_name} shell integration
+export {env_var}="${{TMPDIR:-/tmp}}.{tool_name}_cd_$$"
+
+{tool_name}() {{
+    rm -f "${env_var}"
+    "${{{bin_var}:-$HOME/.local/bin/{tool_name}}}" "$@"
+    local exit_code=$?
+
+    if [[ -f "${env_var}" ]]; then
+        cd "$(cat "${env_var}")"
+        rm -f "${env_var}"
+    fi
+
+    return $exit_code
+}}
+"""
+
+
+def get_shell_wrapper(tool_name: str, env_var: str, shell: str = "zsh") -> str:
+    """Generate shell wrapper script for a tool.
+
+    Args:
+        tool_name: Name of the tool (e.g., 'wt', 'rp')
+        env_var: Environment variable for CD file (e.g., 'WT_CD_FILE')
+        shell: Shell type ('zsh' or 'bash')
+    """
+    template = (
+        SHELL_WRAPPER_TEMPLATE_ZSH if shell == "zsh" else SHELL_WRAPPER_TEMPLATE_BASH
+    )
+    bin_var = f"{tool_name.upper()}_BIN"
+    return template.format(tool_name=tool_name, env_var=env_var, bin_var=bin_var)

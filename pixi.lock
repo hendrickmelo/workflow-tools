@@ -806,9 +806,9 @@ packages:
   size: 62931
   timestamp: 1733130309598
 - pypi: .
-  name: wt
+  name: workflow-tools
   version: 0.1.0
-  sha256: 8988c1b1eaa0af91ce063dc8b8096acdb705929f210348ca572910b8e9674094
+  sha256: bf1f63226efdb10dc5ea411ade6264fc53679e10ec6e0899b1b048679a4749c7
   requires_dist:
   - click>=8.0
   - inquirerpy>=0.3.4

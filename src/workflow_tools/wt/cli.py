@@ -10,18 +10,31 @@ from pathlib import Path
 from typing import NamedTuple
 
 import click
-from InquirerPy import inquirer
 
-# Colors using click.style
-CYAN = "cyan"
-GREEN = "green"
-YELLOW = "yellow"
-RED = "red"
-DIM = "bright_black"
-BOLD = "bold"
+from workflow_tools.common import (
+    CYAN,
+    DIM,
+    GREEN,
+    YELLOW,
+    find_repo_root,
+    fuzzy_select,
+    get_default_branch,
+    list_branches,
+    run_git,
+    select_from_menu,
+    style_dim,
+    style_error,
+    style_info,
+    style_success,
+    style_warn,
+)
+from workflow_tools.common.git import fetch_origin, is_repo_dirty
+from workflow_tools.common.shell import output_cd as _output_cd
 
-# Shell integration marker for cd
-CD_MARKER = "Switching to "
+
+def output_cd(path: Path) -> None:
+    """Write path to WT_CD_FILE for shell wrapper."""
+    _output_cd(path, env_var="WT_CD_FILE")
 
 
 class WorktreeInfo(NamedTuple):
@@ -42,96 +55,6 @@ class PRInfo(NamedTuple):
     is_draft: bool
 
 
-def style_error(msg: str) -> str:
-    """Style an error message."""
-    return click.style(f"✗ {msg}", fg=RED)
-
-
-def style_success(msg: str) -> str:
-    """Style a success message."""
-    return click.style(f"✓ {msg}", fg=GREEN)
-
-
-def style_info(msg: str) -> str:
-    """Style an info message."""
-    return click.style(f"→ {msg}", fg=CYAN)
-
-
-def style_warn(msg: str) -> str:
-    """Style a warning message."""
-    return click.style(f"! {msg}", fg=YELLOW)
-
-
-def style_dim(msg: str) -> str:
-    """Style dim/muted text."""
-    return click.style(msg, fg=DIM)
-
-
-def copy_to_clipboard(text: str) -> bool:
-    """Copy text to clipboard. Returns True on success, False if unavailable."""
-    # Try platform-specific clipboard commands
-    clipboard_commands = [
-        ["pbcopy"],  # macOS
-        ["xclip", "-selection", "clipboard"],  # Linux with xclip
-        ["xsel", "--clipboard", "--input"],  # Linux with xsel
-        ["clip"],  # Windows
-    ]
-
-    for cmd in clipboard_commands:
-        try:
-            subprocess.run(
-                cmd,
-                input=text.encode(),
-                check=True,
-                capture_output=True,
-            )
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            continue
-
-    return False
-
-
-def output_cd(path: Path) -> None:
-    """Write path to WT_CD_FILE for shell wrapper to handle directory change."""
-    cd_file = os.environ.get("WT_CD_FILE")
-    if cd_file:
-        Path(cd_file).write_text(str(path))
-    click.echo(f"{CD_MARKER}{path}")
-
-
-def run_git(*args: str, capture: bool = True, cwd: Path | None = None) -> str | None:
-    """Run a git command and return stdout, or None on failure."""
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            capture_output=capture,
-            text=True,
-            cwd=cwd,
-            check=True,
-        )
-        return result.stdout.strip() if capture else None
-    except subprocess.CalledProcessError:
-        return None
-
-
-def find_repo_root() -> Path | None:
-    """Find the root of the main git repository (not worktree)."""
-    # Get the common git dir (shared across worktrees)
-    git_common = run_git("rev-parse", "--git-common-dir")
-    if not git_common:
-        return None
-
-    git_common_path = Path(git_common).resolve()
-
-    # If it's a bare repo's .git or ends with .git, parent is repo root
-    if git_common_path.name == ".git":
-        return git_common_path.parent
-
-    # For worktrees, git-common-dir points to main repo's .git
-    return git_common_path.parent
-
-
 def get_worktrees_dir(repo_root: Path) -> Path:
     """Get the worktrees directory (repo.worktrees/)."""
     return repo_root.parent / f"{repo_root.name}.worktrees"
@@ -142,30 +65,9 @@ def get_worktree_path(repo_root: Path, name: str) -> Path:
     return get_worktrees_dir(repo_root) / name
 
 
-def get_default_branch(repo_root: Path) -> str:
-    """Detect the default branch (main/master/etc)."""
-    # Try to get from remote HEAD
-    result = run_git("symbolic-ref", "refs/remotes/origin/HEAD", cwd=repo_root)
-    if result:
-        return result.split("/")[-1]
-
-    # Check common names
-    for branch in ["main", "master"]:
-        if run_git("rev-parse", "--verify", f"refs/heads/{branch}", cwd=repo_root):
-            return branch
-
-    return "main"  # fallback
-
-
-def get_current_branch() -> str | None:
-    """Get the current branch name."""
-    return run_git("branch", "--show-current")
-
-
 def is_worktree_dirty(worktree_path: Path) -> bool:
     """Check if a worktree has uncommitted changes."""
-    result = run_git("status", "--porcelain", cwd=worktree_path)
-    return bool(result and result.strip())
+    return is_repo_dirty(worktree_path)
 
 
 def list_worktrees(repo_root: Path) -> list[WorktreeInfo]:
@@ -213,25 +115,6 @@ def list_worktrees(repo_root: Path) -> list[WorktreeInfo]:
     return worktrees
 
 
-def list_branches(repo_root: Path, include_remote: bool = True) -> list[str]:
-    """List all branches."""
-    args = ["branch", "--format=%(refname:short)"]
-    if include_remote:
-        args.append("-a")
-
-    result = run_git(*args, cwd=repo_root)
-    if not result:
-        return []
-
-    branches: list[str] = []
-    for line in result.split("\n"):
-        branch = line.strip()
-        if branch and "HEAD" not in branch:
-            branches.append(branch)
-
-    return sorted(set(branches))
-
-
 def list_prs() -> list[PRInfo]:
     """Fetch open PRs from GitHub using gh CLI."""
     try:
@@ -263,33 +146,6 @@ def list_prs() -> list[PRInfo]:
         return []
 
 
-def fuzzy_select(options: list[str], message: str) -> int | None:
-    """Show fuzzy select menu. Returns index or None if cancelled."""
-    try:
-        prompt = inquirer.fuzzy(  # type: ignore[attr-defined]
-            message=message,
-            choices=options,
-        )
-        result = prompt.execute()
-        if result is None:
-            return None
-        return options.index(result)
-    except KeyboardInterrupt:
-        return None
-
-
-def select_from_menu(title: str, options: list[str]) -> str | None:
-    """Display interactive menu and return selection."""
-    if not options:
-        click.echo(style_error("No options available."), err=True)
-        return None
-
-    index = fuzzy_select(options, title)
-    if index is None:
-        return None
-    return options[index]
-
-
 def format_branch_option(branch: str) -> str:
     """Format a branch name for display in menu."""
     if branch.startswith("origin/"):
@@ -299,19 +155,6 @@ def format_branch_option(branch: str) -> str:
         return f"{remote_part}{branch_part}"
     # Local branch
     return click.style(branch, fg=GREEN)
-
-
-def fetch_origin(repo_root: Path) -> bool:
-    """Fetch from origin. Returns True on success."""
-    click.echo(style_info("Fetching from origin..."))
-    result = subprocess.run(
-        ["git", "fetch", "origin"],
-        check=False,
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
 
 
 def prompt_base_branch(repo_root: Path) -> str | None:
@@ -447,10 +290,29 @@ def require_repo() -> Path:
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(package_name="wt")
+@click.version_option(package_name="workflow-tools")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """Git worktree manager with interactive selection."""
+    """Git worktree manager with interactive selection.
+
+    EXAMPLES:
+        wt                  # Interactive: pick worktree to switch to
+        wt create           # Interactive: create new worktree
+        wt create foo       # Create worktree named 'foo'
+        wt pr               # Create worktree from GitHub PR
+        wt fork             # Create worktree with new branch
+        wt list             # List all worktrees
+        wt remove foo       # Remove worktree 'foo'
+        wt cleanup          # Remove current worktree
+
+    ALIASES:
+        wt sw = wt switch
+        wt cr = wt create
+        wt ls = wt list
+        wt rm = wt remove
+        wt fk = wt fork
+        wt c  = wt claude
+    """
     if ctx.invoked_subcommand is None:
         ctx.invoke(switch_cmd)
 
@@ -462,6 +324,10 @@ def create(name: str | None, branch: str | None) -> None:
     """Create a new worktree.
 
     Without -b flag, shows interactive branch picker.
+
+    EXAMPLES:
+        wt create                    # Interactive mode
+        wt create foo -b feature     # Create 'foo' with branch 'feature'
     """
     repo_root = require_repo()
 
@@ -510,12 +376,16 @@ def create(name: str | None, branch: str | None) -> None:
             output_cd(worktree_path)
 
 
-@cli.command()
+@cli.command("pr")
 @click.argument("name", required=False)
-def pr(name: str | None) -> None:
+def pr_cmd(name: str | None) -> None:
     """Create worktree from a GitHub PR.
 
     Shows interactive PR picker.
+
+    EXAMPLES:
+        wt pr           # Interactive: pick from open PRs
+        wt pr review    # Create worktree named 'review' from selected PR
     """
     repo_root = require_repo()
 
@@ -577,6 +447,10 @@ def fork(name: str | None) -> None:
     """Create worktree with a new branch.
 
     Prompts for branch name, then base branch (defaults to current HEAD).
+
+    EXAMPLES:
+        wt fork              # Interactive: create new branch
+        wt fork feature      # Create worktree named 'feature'
     """
     repo_root = require_repo()
 
@@ -614,7 +488,12 @@ def fork(name: str | None) -> None:
 
 @cli.command("list")
 def list_cmd() -> None:
-    """List all worktrees."""
+    """List all worktrees.
+
+    EXAMPLES:
+        wt list
+        wt ls
+    """
     repo_root = require_repo()
 
     worktrees = list_worktrees(repo_root)
@@ -644,6 +523,11 @@ def switch_cmd(name: str | None) -> None:
     """Switch to a worktree.
 
     Without NAME, shows interactive picker.
+
+    EXAMPLES:
+        wt switch           # Interactive: pick worktree
+        wt switch foo       # Switch to worktree 'foo'
+        wt foo              # Same (switch is default command)
     """
     repo_root = require_repo()
 
@@ -728,6 +612,11 @@ def remove(name: str | None, *, force: bool) -> None:
     """Remove a worktree.
 
     Without NAME, shows interactive picker.
+
+    EXAMPLES:
+        wt remove           # Interactive: pick worktree to remove
+        wt remove foo       # Remove worktree 'foo'
+        wt rm foo -f        # Force remove even with uncommitted changes
     """
     repo_root = require_repo()
 
@@ -778,6 +667,11 @@ def claude(name: str | None) -> None:
     """Open Claude Code in a worktree.
 
     Without NAME, shows interactive picker.
+
+    EXAMPLES:
+        wt claude           # Interactive: pick worktree
+        wt claude foo       # Open Claude in worktree 'foo'
+        wt c foo            # Same (alias)
     """
     repo_root = require_repo()
 
@@ -817,7 +711,12 @@ def claude(name: str | None) -> None:
 @cli.command()
 @click.argument("name")
 def path(name: str) -> None:
-    """Print the path to a worktree."""
+    """Print the path to a worktree.
+
+    EXAMPLES:
+        wt path foo         # Print path to worktree 'foo'
+        cd $(wt path foo)   # Change to worktree directory
+    """
     repo_root = require_repo()
 
     worktree_path = get_worktree_path(repo_root, name)
@@ -830,213 +729,15 @@ def path(name: str) -> None:
     click.echo(worktree_path)
 
 
-# Shell integration scripts
-SHELL_WRAPPER_ZSH = """
-# wt shell integration
-export WT_CD_FILE="${TMPDIR:-/tmp}/.wt_cd_$$"
-
-wt() {
-    rm -f "$WT_CD_FILE"
-    "${WT_BIN:-$HOME/.local/bin/wt}" "$@"
-    local exit_code=$?
-
-    if [[ -f "$WT_CD_FILE" ]]; then
-        cd "$(cat "$WT_CD_FILE")"
-        rm -f "$WT_CD_FILE"
-    fi
-
-    return $exit_code
-}
-
-# wt completions for zsh
-_wt_worktrees() {
-    local worktrees_dir
-    worktrees_dir="$(git rev-parse --show-toplevel 2>/dev/null).worktrees"
-    [[ -d "$worktrees_dir" ]] && ls "$worktrees_dir" 2>/dev/null
-}
-
-_wt_branches() {
-    git branch -a --format='%(refname:short)' 2>/dev/null | grep -v HEAD
-}
-
-_wt() {
-    local state
-    _arguments -C \\
-        '1: :->command' \\
-        '*: :->args'
-
-    case $state in
-        command)
-            local commands=(
-                'create:Create a new worktree'
-                'cr:Create a new worktree (alias)'
-                'switch:Switch to a worktree'
-                'sw:Switch to a worktree (alias)'
-                'pr:Create worktree from a GitHub PR'
-                'fork:Create worktree from current branch'
-                'fk:Create worktree from current branch (alias)'
-                'list:List all worktrees'
-                'ls:List all worktrees (alias)'
-                'remove:Remove a worktree'
-                'rm:Remove a worktree (alias)'
-                'cleanup:Remove the current worktree'
-                'claude:Open Claude Code in a worktree'
-                'c:Open Claude Code in a worktree (alias)'
-                'path:Print the path to a worktree'
-                'install:Install shell integration'
-            )
-            _describe 'command' commands
-            ;;
-        args)
-            case $words[2] in
-                switch|sw|remove|rm|claude|c|path)
-                    local worktrees=($(_wt_worktrees))
-                    _describe 'worktree' worktrees
-                    ;;
-                create|cr)
-                    if [[ "$words[-2]" == "-b" || "$words[-2]" == "--branch" ]]; then
-                        local branches=($(_wt_branches))
-                        _describe 'branch' branches
-                    fi
-                    ;;
-            esac
-            ;;
-    esac
-}
-
-compdef _wt wt
-"""
-
-SHELL_WRAPPER_BASH = """
-# wt shell integration
-export WT_CD_FILE="${TMPDIR:-/tmp}/.wt_cd_$$"
-
-wt() {
-    rm -f "$WT_CD_FILE"
-    "${WT_BIN:-$HOME/.local/bin/wt}" "$@"
-    local exit_code=$?
-
-    if [[ -f "$WT_CD_FILE" ]]; then
-        cd "$(cat "$WT_CD_FILE")"
-        rm -f "$WT_CD_FILE"
-    fi
-
-    return $exit_code
-}
-
-# wt completions for bash
-_wt_worktrees() {
-    local worktrees_dir
-    worktrees_dir="$(git rev-parse --show-toplevel 2>/dev/null).worktrees"
-    [[ -d "$worktrees_dir" ]] && ls "$worktrees_dir" 2>/dev/null
-}
-
-_wt_branches() {
-    git branch -a --format='%(refname:short)' 2>/dev/null | grep -v HEAD
-}
-
-_wt_completions() {
-    local cur prev commands
-    COMPREPLY=()
-    cur="${COMP_WORDS[COMP_CWORD]}"
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="create cr switch sw pr fork fk list ls remove rm cleanup claude c path install"
-
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
-        return 0
-    fi
-
-    case "${COMP_WORDS[1]}" in
-        switch|sw|remove|rm|claude|c|path)
-            COMPREPLY=($(compgen -W "$(_wt_worktrees)" -- "$cur"))
-            ;;
-        create|cr)
-            if [[ "$prev" == "-b" || "$prev" == "--branch" ]]; then
-                COMPREPLY=($(compgen -W "$(_wt_branches)" -- "$cur"))
-            fi
-            ;;
-    esac
-    return 0
-}
-
-complete -F _wt_completions wt
-"""
-
-
-INSTALL_LINE = 'eval "$(wt install --print)"'
-
-
-@cli.command()
-@click.option(
-    "--shell",
-    type=click.Choice(["zsh", "bash", "auto"]),
-    default="auto",
-    help="Shell type (default: auto-detect)",
-)
-@click.option(
-    "--print",
-    "print_only",
-    is_flag=True,
-    help="Print shell script instead of installing",
-)
-def install(shell: str, *, print_only: bool) -> None:
-    """Install shell integration (cd support + completions).
-
-    Appends to ~/.zshrc or ~/.bashrc.
-    """
-    if shell == "auto":
-        shell_path = os.environ.get("SHELL", "")
-        if "zsh" in shell_path:
-            shell = "zsh"
-        elif "bash" in shell_path:
-            shell = "bash"
-        else:
-            click.echo(
-                style_error(f"Unknown shell: {shell_path}. Use --shell to specify."),
-                err=True,
-            )
-            sys.exit(1)
-
-    # Just print the script (used by eval)
-    if print_only:
-        if shell == "zsh":
-            click.echo(SHELL_WRAPPER_ZSH)
-        else:
-            click.echo(SHELL_WRAPPER_BASH)
-        return
-
-    # Determine config file
-    home = Path.home()
-    config_file = home / ".zshrc" if shell == "zsh" else home / ".bashrc"
-
-    # Check if already installed
-    source_cmd = f"source {config_file}"
-    if config_file.exists():
-        content = config_file.read_text()
-        if INSTALL_LINE in content:
-            click.echo(style_info(f"Already installed in {config_file}"))
-            click.echo(style_dim(f"  Restart your shell or run: {source_cmd}"))
-            if copy_to_clipboard(source_cmd):
-                click.echo(style_dim("  (copied to clipboard)"))
-            return
-
-    # Append to config
-    with config_file.open("a") as f:
-        f.write(f"\n# wt shell integration\n{INSTALL_LINE}\n")
-
-    click.echo(style_success(f"Installed to {config_file}"))
-    click.echo(style_dim(f"  Restart your shell or run: {source_cmd}"))
-    if copy_to_clipboard(source_cmd):
-        click.echo(style_dim("  (copied to clipboard)"))
-
-
 @cli.command()
 def cleanup() -> None:
     """Remove the current worktree.
 
     Prompts for confirmation, checks for uncommitted changes,
     and switches back to the main repo after removal.
+
+    EXAMPLES:
+        wt cleanup          # Remove current worktree (with confirmation)
     """
     repo_root = require_repo()
     cwd = Path.cwd().resolve()
@@ -1107,7 +808,6 @@ cli.add_command(switch_cmd, name="sw")
 cli.add_command(list_cmd, name="ls")
 cli.add_command(remove, name="rm")
 cli.add_command(fork, name="fk")
-cli.add_command(pr, name="pr")  # already 2 letters
 cli.add_command(claude, name="c")
 
 

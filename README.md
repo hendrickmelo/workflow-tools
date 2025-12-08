@@ -1,45 +1,71 @@
-# wt - Git Worktree Manager
+# workflow-tools
 
-CLI tool for managing git worktrees with interactive selection and fuzzy search.
+CLI tools for git workflow: worktrees, PRs, and repository management.
 
 ## Installation
 
 ```bash
-pixi run install    # Builds and installs to ~/.local/bin/wt
-wt install          # Set up shell integration (cd support + completions)
+curl -fsSL https://raw.githubusercontent.com/emmapowers/workflow-tools/main/install.sh | bash
 ```
 
-## Usage
+For development (changes take effect immediately):
+```bash
+git clone git@github.com:emmapowers/workflow-tools.git
+cd workflow-tools
+./install-dev.sh
+```
+
+## Commands
+
+### `wt` - Git Worktree Manager
 
 ```bash
 wt                  # Interactive picker to switch worktrees
 wt create           # Interactive branch picker
-wt create <name> -b <branch>  # Non-interactive
-wt pr               # Pick from open PRs
+wt create <name> -b <branch>
+wt pr               # Create worktree from open PR
 wt fork <name>      # Fork from current branch
 wt list             # List worktrees
 wt remove           # Interactive picker
 wt remove <name>    # Remove specific worktree
-wt claude           # Interactive picker, open Claude Code
-wt claude <name>    # Open Claude Code in worktree
+wt claude           # Open Claude Code in worktree
 wt path <name>      # Print worktree path
+wt cleanup          # Remove current worktree and switch to main
 ```
 
-### Aliases
+Aliases: `cr`, `sw`, `ls`, `rm`, `fk`, `c`
 
-| Command | Alias |
-|---------|-------|
-| `create` | `cr` |
-| `switch` | `sw` |
-| `list` | `ls` |
-| `remove` | `rm` |
-| `fork` | `fk` |
-| `claude` | `c` |
+### `rp` - Repository Manager
+
+```bash
+rp                  # Interactive picker to switch repos
+rp -r               # Refresh cache and pick
+rp list             # List all discovered repos
+rp create <name>    # Create new GitHub repo
+rp fork <owner/repo>  # Fork a GitHub repo
+rp clone            # Clone one of your GitHub repos
+rp rename <old> <new>  # Rename local folder and GitHub repo
+rp refresh          # Force refresh repo cache
+```
+
+Aliases: `sw`, `ls`, `cr`, `fk`, `cl`, `rn`, `rf`
+
+### `pr` - Pull Request Manager
+
+```bash
+pr                  # Show PR for current branch
+pr <number>         # Show specific PR
+pr list             # List open PRs
+pr diff             # Show PR diff
+pr files            # List changed files
+pr threads          # List review threads
+pr resolve <id>     # Resolve thread(s)
+pr unresolve <id>   # Unresolve thread(s)
+pr reply <id>       # Reply to thread
+```
 
 ## Shell Integration
 
-Run `wt install` to enable:
-- Auto-cd to worktree after `create`, `pr`, `fork`, `switch`
-- Tab completions for commands, worktree names, and branches
-
-Worktrees are created at `repo.worktrees/<name>` (sibling to main repo).
+Run `workflow-tools install` to enable:
+- Auto-cd after switching repos/worktrees
+- Shell aliases (`wt`, `rp`, `pr`)

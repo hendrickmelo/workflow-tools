@@ -1,7 +1,7 @@
 [project]
-name = "wt"
+name = "workflow-tools"
 version = "0.1.0"
-description = "Git worktree manager with interactive selection UI"
+description = "CLI tools for git workflow: worktrees, PRs, and repositories"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,14 +10,14 @@ dependencies = [
 ]
 
 [project.scripts]
-wt = "wt.cli:cli"
+workflow-tools = "workflow_tools.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/wt"]
+packages = ["src/workflow_tools"]
 
 # Linting & Formatting
 [tool.black]
@@ -80,7 +80,7 @@ channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.pypi-dependencies]
-wt = { path = ".", editable = true }
+workflow-tools = { path = ".", editable = true }
 
 [tool.pixi.dependencies]
 python = "3.11.*"
@@ -110,12 +110,8 @@ cleanup = { depends-on = ["fmt", "ruff-fix", "typecheck"], description = "Run al
 lint = { depends-on = ["fmt-check", "ruff-check", "typecheck-ci"], description = "Check all linters (no fix)" }
 ci = { depends-on = ["lint"], description = "Run CI checks" }
 
-# Build
+# Build (for local dev only)
 build = { cmd = "pip wheel . -w dist --no-deps", description = "Build wheel" }
-build-bin = { cmd = "PYAPP_PROJECT_PATH=\"$PWD/dist/wt-0.1.0-py3-none-any.whl\" PYAPP_EXEC_SPEC=\"wt.cli:cli\" PYAPP_DISTRIBUTION_EMBED=1 PYAPP_UPGRADE_VIRTUALENV=1 cargo install pyapp --force --root build", description = "Build binary with PyApp", depends-on = ["build"] }
-
-# Install
-install = { cmd = "cp build/bin/pyapp $HOME/.local/bin/wt && chmod +x $HOME/.local/bin/wt && $HOME/.local/bin/wt self restore", description = "Install wt to ~/.local/bin", depends-on = ["build-bin"] }
 
 # Clean
 clean = { cmd = "rm -rf dist build .mypy_cache .ruff_cache", description = "Clean build artifacts" }
