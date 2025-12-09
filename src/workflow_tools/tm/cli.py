@@ -15,6 +15,7 @@ from workflow_tools.common import (
     DIM,
     GREEN,
     YELLOW,
+    ValidationError,
     fuzzy_select,
     get_current_branch,
     style_dim,
@@ -22,12 +23,14 @@ from workflow_tools.common import (
     style_info,
     style_success,
     style_warn,
+    validate_tmux_session_name,
 )
 
 # Colors used for list output (not fuzzy picker)
 
-# Number of fields in tmux session format string
-_SESSION_FORMAT_FIELDS = 3
+# Separator for tmux list-sessions output (tab is safe - won't appear in session names)
+_TMUX_FIELD_SEP = "\t"
+_TMUX_SESSION_FIELD_COUNT = 3
 
 
 class SessionInfo(NamedTuple):
@@ -43,13 +46,27 @@ def get_hostname() -> str:
     return socket.gethostname().split(".")[0]
 
 
+def sanitize_session_name(name: str) -> str:
+    """Sanitize a string to be a valid tmux session name.
+
+    Replaces invalid characters (: . / and whitespace) with hyphens.
+    """
+    # Replace common invalid characters with hyphens
+    for char in [":", ".", "/", "\\", "\t", "\n", "\r"]:
+        name = name.replace(char, "-")
+    # Collapse multiple hyphens
+    while "--" in name:
+        name = name.replace("--", "-")
+    # Strip leading/trailing hyphens
+    return name.strip("-")
+
+
 def get_suggested_name() -> str:
     """Get suggested session name from current branch or hostname."""
     branch = get_current_branch()
     if branch:
-        # Sanitize branch name: replace / with -
-        return branch.replace("/", "-")
-    return get_hostname()
+        return sanitize_session_name(branch)
+    return sanitize_session_name(get_hostname())
 
 
 def is_tmux_installed() -> bool:
@@ -127,13 +144,12 @@ def require_outside_tmux(command: str | None = None) -> bool:
 
 def list_sessions() -> list[SessionInfo]:
     """List all tmux sessions."""
+    # Use tab separator to handle session names with colons
+    format_str = _TMUX_FIELD_SEP.join(
+        ["#{session_name}", "#{session_attached}", "#{session_windows}"]
+    )
     result = subprocess.run(
-        [
-            "tmux",
-            "list-sessions",
-            "-F",
-            "#{session_name}:#{session_attached}:#{session_windows}",
-        ],
+        ["tmux", "list-sessions", "-F", format_str],
         capture_output=True,
         text=True,
         check=False,
@@ -146,8 +162,8 @@ def list_sessions() -> list[SessionInfo]:
     for line in result.stdout.strip().split("\n"):
         if not line:
             continue
-        parts = line.split(":")
-        if len(parts) >= _SESSION_FORMAT_FIELDS:
+        parts = line.split(_TMUX_FIELD_SEP)
+        if len(parts) == _TMUX_SESSION_FIELD_COUNT:
             sessions.append(
                 SessionInfo(
                     name=parts[0],
@@ -178,14 +194,31 @@ def set_terminal_title(session_name: str) -> None:
 
 
 def run_tmux_attach(session_name: str) -> None:
-    """Attach to a tmux session, replacing current process."""
+    """Attach to a tmux session, replacing current process.
+
+    Note: For attach, we don't sanitize because the session already exists
+    with whatever name it has (possibly created outside tm).
+    """
     set_terminal_title(session_name)
     # Use exec to replace current process with tmux
     os.execlp("tmux", "tmux", "attach-session", "-t", session_name)
 
 
 def run_tmux_new(session_name: str) -> None:
-    """Create and attach to a new tmux session, replacing current process."""
+    """Create and attach to a new tmux session, replacing current process.
+
+    Sanitizes the session name first, then validates as a safety check.
+    """
+    # Sanitize first (convert invalid chars to hyphens)
+    session_name = sanitize_session_name(session_name)
+
+    # Validate as safety check
+    try:
+        validate_tmux_session_name(session_name)
+    except ValidationError as e:
+        click.echo(style_error(str(e)), err=True)
+        sys.exit(1)
+
     set_terminal_title(session_name)
     # Use exec to replace current process with tmux
     os.execlp("tmux", "tmux", "new-session", "-s", session_name)

@@ -34,6 +34,7 @@ from workflow_tools.common.validate import (
     validate_path_no_traversal,
     validate_pr_number,
     validate_temp_path,
+    validate_tmux_session_name,
     validate_worktree_name,
 )
 
@@ -68,5 +69,6 @@ __all__ = [
     "validate_path_no_traversal",
     "validate_pr_number",
     "validate_temp_path",
+    "validate_tmux_session_name",
     "validate_worktree_name",
 ]
