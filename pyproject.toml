@@ -59,6 +59,9 @@ ignore = [
     "TC003",    # type-checking block - standard library
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["PLR2004"]  # Magic values are fine in tests
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -91,6 +94,8 @@ black = ">=25.1.0,<26"
 ruff = ">=0.14.7,<0.15"
 mypy = ">=1.19.0,<2"
 inquirerpy = ">=0.3.4,<0.4"
+pytest = ">=8.0,<9"
+pytest-mock = ">=3.14,<4"
 
 [tool.pixi.tasks]
 # Formatting
@@ -108,10 +113,22 @@ typecheck-ci = { cmd = "mypy src", description = "Run mypy (full check)" }
 # Combined tasks
 cleanup = { depends-on = ["fmt", "ruff-fix", "typecheck"], description = "Run all linters with auto-fix" }
 lint = { depends-on = ["fmt-check", "ruff-check", "typecheck-ci"], description = "Check all linters (no fix)" }
-ci = { depends-on = ["lint"], description = "Run CI checks" }
+ci = { depends-on = ["lint", "test"], description = "Run CI checks" }
 
 # Build (for local dev only)
 build = { cmd = "pip wheel . -w dist --no-deps", description = "Build wheel" }
 
+# Testing
+test = { cmd = "pytest", description = "Run tests" }
+test-v = { cmd = "pytest -v", description = "Run tests (verbose)" }
+
 # Clean
 clean = { cmd = "rm -rf dist build .mypy_cache .ruff_cache", description = "Clean build artifacts" }
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["-v", "--tb=short"]

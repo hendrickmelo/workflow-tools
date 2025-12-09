@@ -20,9 +20,28 @@ def discover_repos(scan_paths: list[Path] | None = None) -> list[Path]:
     for base in scan_paths:
         if not base.exists():
             continue
+
+        # Resolve path and validate no traversal outside expected directories
+        try:
+            resolved_base = base.resolve()
+            # Basic safety check: path should not contain .. after resolution
+            if ".." in resolved_base.parts:
+                continue
+        except (OSError, ValueError):
+            continue
+
         try:
             result = subprocess.run(
-                ["find", str(base), "-maxdepth", "3", "-type", "d", "-name", ".git"],
+                [
+                    "find",
+                    str(resolved_base),
+                    "-maxdepth",
+                    "3",
+                    "-type",
+                    "d",
+                    "-name",
+                    ".git",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=10,

@@ -72,6 +72,40 @@ class ActionResult(NamedTuple):
     message: str
 
 
+class PRListInfo(NamedTuple):
+    """Minimal PR info for listing operations (used by wt pr command)."""
+
+    number: int
+    title: str
+    branch: str
+    is_draft: bool
+
+
+def list_prs_simple() -> list[PRListInfo]:
+    """Fetch open PRs with minimal fields (for wt pr command).
+
+    Returns a list of PRListInfo with just number, title, branch, and draft status.
+    """
+    result = run_gh(
+        "pr", "list", "--json", "number,title,headRefName,isDraft", "--limit", "100"
+    )
+    if not result:
+        return []
+    try:
+        data = json.loads(result)
+        return [
+            PRListInfo(
+                number=pr["number"],
+                title=pr["title"],
+                branch=pr["headRefName"],
+                is_draft=pr["isDraft"],
+            )
+            for pr in data
+        ]
+    except (json.JSONDecodeError, KeyError):
+        return []
+
+
 def get_current_branch() -> str | None:
     """Get the current git branch name."""
     try:

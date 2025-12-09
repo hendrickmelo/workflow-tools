@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import click
@@ -21,7 +22,15 @@ def output_cd(path: Path, env_var: str = "WT_CD_FILE") -> None:
     """
     cd_file = os.environ.get(env_var)
     if cd_file:
-        Path(cd_file).write_text(str(path))
+        # Validate cd_file is in temp directory to prevent path traversal
+        try:
+            cd_path = Path(cd_file).resolve()
+            temp_dir = Path(tempfile.gettempdir()).resolve()
+            cd_path.relative_to(temp_dir)
+            cd_path.write_text(str(path))
+        except (ValueError, OSError):
+            # Not in temp dir or write failed - skip silently
+            pass
     click.echo(f"{CD_MARKER}{path}")
 
 
@@ -53,7 +62,7 @@ def copy_to_clipboard(text: str) -> bool:
 # Shell wrapper scripts
 SHELL_WRAPPER_TEMPLATE_ZSH = """
 # {tool_name} shell integration
-export {env_var}="${{TMPDIR:-/tmp}}.{tool_name}_cd_$$"
+export {env_var}="${{TMPDIR:-/tmp}}/.{tool_name}_cd_$$"
 
 {tool_name}() {{
     rm -f "${env_var}"
@@ -71,7 +80,7 @@ export {env_var}="${{TMPDIR:-/tmp}}.{tool_name}_cd_$$"
 
 SHELL_WRAPPER_TEMPLATE_BASH = """
 # {tool_name} shell integration
-export {env_var}="${{TMPDIR:-/tmp}}.{tool_name}_cd_$$"
+export {env_var}="${{TMPDIR:-/tmp}}/.{tool_name}_cd_$$"
 
 {tool_name}() {{
     rm -f "${env_var}"

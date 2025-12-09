@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -16,10 +15,11 @@ from workflow_tools.common import (
     DIM,
     GREEN,
     YELLOW,
-    find_repo_root,
+    ValidationError,
     fuzzy_select,
     get_default_branch,
     list_branches,
+    require_repo,
     run_git,
     select_from_menu,
     style_dim,
@@ -27,9 +27,12 @@ from workflow_tools.common import (
     style_info,
     style_success,
     style_warn,
+    validate_pr_number,
+    validate_worktree_name,
 )
 from workflow_tools.common.git import fetch_origin, is_repo_dirty
 from workflow_tools.common.shell import output_cd as _output_cd
+from workflow_tools.pr.api import list_prs_simple
 
 
 def output_cd(path: Path) -> None:
@@ -44,15 +47,6 @@ class WorktreeInfo(NamedTuple):
     name: str
     branch: str | None
     is_bare: bool
-
-
-class PRInfo(NamedTuple):
-    """Information about a GitHub pull request."""
-
-    number: int
-    title: str
-    branch: str
-    is_draft: bool
 
 
 def get_worktrees_dir(repo_root: Path) -> Path:
@@ -113,37 +107,6 @@ def list_worktrees(repo_root: Path) -> list[WorktreeInfo]:
         )
 
     return worktrees
-
-
-def list_prs() -> list[PRInfo]:
-    """Fetch open PRs from GitHub using gh CLI."""
-    try:
-        result = subprocess.run(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--json",
-                "number,title,headRefName,isDraft",
-                "--limit",
-                "100",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        data = json.loads(result.stdout)
-        return [
-            PRInfo(
-                number=pr["number"],
-                title=pr["title"],
-                branch=pr["headRefName"],
-                is_draft=pr["isDraft"],
-            )
-            for pr in data
-        ]
-    except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
-        return []
 
 
 def format_branch_option(branch: str) -> str:
@@ -231,7 +194,15 @@ def select_branch_interactive(repo_root: Path) -> tuple[str, bool] | None:
             return None
         # Create branch from selected base
         if base != "HEAD":
-            run_git("branch", branch_name, base, cwd=repo_root)
+            result = run_git("branch", branch_name, base, cwd=repo_root)
+            if result is None:
+                click.echo(
+                    style_error(
+                        f"Failed to create branch '{branch_name}' from '{base}'"
+                    ),
+                    err=True,
+                )
+                return None
             return (branch_name, False)  # Branch exists now, no need for -b
         return (branch_name, True)
     # Return actual branch name
@@ -275,15 +246,6 @@ def create_worktree(
         return worktree_path
     click.echo(style_error(f"Failed to create worktree: {result.stderr}"), err=True)
     return None
-
-
-def require_repo() -> Path:
-    """Get repo root or exit with error."""
-    repo_root = find_repo_root()
-    if not repo_root:
-        click.echo(style_error("Not in a git repository"), err=True)
-        sys.exit(1)
-    return repo_root
 
 
 # CLI Commands
@@ -346,7 +308,13 @@ def create(name: str | None, branch: str | None) -> None:
         if new_branch:
             # Create from default branch
             default = get_default_branch(repo_root)
-            run_git("branch", branch, default, cwd=repo_root)
+            git_result = run_git("branch", branch, default, cwd=repo_root)
+            if git_result is None:
+                click.echo(
+                    style_error(f"Failed to create branch '{branch}' from '{default}'"),
+                    err=True,
+                )
+                sys.exit(1)
 
         worktree_path = create_worktree(repo_root, name, branch, new_branch=False)
         if worktree_path:
@@ -369,6 +337,13 @@ def create(name: str | None, branch: str | None) -> None:
                 prompt_suffix=" → ",
             )
 
+        # Validate worktree name
+        try:
+            name = validate_worktree_name(name)
+        except ValidationError as e:
+            click.echo(style_error(str(e)), err=True)
+            return
+
         worktree_path = create_worktree(
             repo_root, name, selected_branch, new_branch=is_new
         )
@@ -390,7 +365,7 @@ def pr_cmd(name: str | None) -> None:
     repo_root = require_repo()
 
     click.echo(style_info("Fetching PRs from GitHub..."))
-    prs = list_prs()
+    prs = list_prs_simple()
     if not prs:
         click.echo(
             style_error("No open PRs found (or gh CLI not available)."), err=True
@@ -427,13 +402,34 @@ def pr_cmd(name: str | None) -> None:
             prompt_suffix=" → ",
         )
 
+    # Validate worktree name
+    try:
+        name = validate_worktree_name(name)
+    except ValidationError as e:
+        click.echo(style_error(str(e)), err=True)
+        return
+
+    # Validate PR number
+    try:
+        pr_num = validate_pr_number(selected_pr.number)
+    except ValidationError as e:
+        click.echo(style_error(str(e)), err=True)
+        return
+
     # Fetch and create worktree with the PR's branch
-    run_git(
+    fetch_result = run_git(
         "fetch",
         "origin",
-        f"pull/{selected_pr.number}/head:{selected_pr.branch}",
+        f"pull/{pr_num}/head:{selected_pr.branch}",
         cwd=repo_root,
     )
+    if fetch_result is None:
+        click.echo(
+            style_error(f"Failed to fetch PR #{pr_num}"),
+            err=True,
+        )
+        return
+
     worktree_path = create_worktree(
         repo_root, name, selected_pr.branch, new_branch=False
     )
@@ -475,9 +471,22 @@ def fork(name: str | None) -> None:
             prompt_suffix=" → ",
         )
 
+    # Validate worktree name
+    try:
+        name = validate_worktree_name(name)
+    except ValidationError as e:
+        click.echo(style_error(str(e)), err=True)
+        return
+
     # Create branch from base if not HEAD
     if base != "HEAD":
-        run_git("branch", new_branch, base, cwd=repo_root)
+        result = run_git("branch", new_branch, base, cwd=repo_root)
+        if result is None:
+            click.echo(
+                style_error(f"Failed to create branch '{new_branch}' from '{base}'"),
+                err=True,
+            )
+            return
         worktree_path = create_worktree(repo_root, name, new_branch, new_branch=False)
     else:
         worktree_path = create_worktree(repo_root, name, new_branch, new_branch=True)

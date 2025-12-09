@@ -12,12 +12,15 @@ import click
 from workflow_tools.common import (
     CYAN,
     DIM,
+    ValidationError,
     fuzzy_select,
+    parse_github_url,
     style_dim,
     style_error,
     style_info,
     style_success,
     style_warn,
+    validate_github_owner,
 )
 from workflow_tools.common.github import run_gh, run_gh_json
 from workflow_tools.common.shell import output_cd as _output_cd
@@ -233,13 +236,20 @@ def create(
 
     clone_path = dest_dir / name
 
+    # Parse owner from the created repo URL
+    parsed = parse_github_url(result.strip())
+    if not parsed:
+        click.echo(style_error(f"Could not parse repo URL: {result.strip()}"), err=True)
+        sys.exit(1)
+    owner, _ = parsed
+
     # Clone via SSH
     click.echo(style_info(f"Cloning to {clone_path}..."))
     clone_result = subprocess.run(
         [
             "git",
             "clone",
-            f"git@github.com:{result.strip().split('/')[-2]}/{name}.git",
+            f"git@github.com:{owner}/{name}.git",
             str(clone_path),
         ],
         check=False,
@@ -399,6 +409,8 @@ def clone(repo_name: str | None, path: str | None, *, clone_all: bool) -> None:
     # Get local repos to check what's already cloned
     local_repos = discover_repos()
     local_names = {r.name for r in local_repos}
+    # Build lookup dict for O(1) access instead of O(n) search
+    local_repos_by_name = {r.name: r for r in local_repos}
 
     if repo_name:
         # Direct clone
@@ -409,11 +421,11 @@ def clone(repo_name: str | None, path: str | None, *, clone_all: bool) -> None:
 
         if repo_name in local_names:
             # Find path and switch to it
-            for r in local_repos:
-                if r.name == repo_name:
-                    click.echo(style_info(f"'{repo_name}' already cloned at {r}"))
-                    output_cd(r)
-                    return
+            local_path = local_repos_by_name.get(repo_name)
+            if local_path:
+                click.echo(style_info(f"'{repo_name}' already cloned at {local_path}"))
+                output_cd(local_path)
+                return
         repos_to_clone = matching
     else:
         # Interactive selection
@@ -423,7 +435,7 @@ def clone(repo_name: str | None, path: str | None, *, clone_all: bool) -> None:
             name = r["name"]
             desc = r.get("description", "")[:40] or ""
             if name in local_names:
-                local_path = next((lr for lr in local_repos if lr.name == name), None)
+                local_path = local_repos_by_name.get(name)
                 if local_path:
                     short_path = str(local_path).replace(str(Path.home()), "~")
                     options.append(
@@ -449,11 +461,11 @@ def clone(repo_name: str | None, path: str | None, *, clone_all: bool) -> None:
             selected = gh_repos[index]
             if selected["name"] in local_names:
                 # Switch to existing repo
-                for r in local_repos:
-                    if r.name == selected["name"]:
-                        click.echo(style_info(f"Already cloned, switching to {r}"))
-                        output_cd(r)
-                        return
+                local_path = local_repos_by_name.get(selected["name"])
+                if local_path:
+                    click.echo(style_info(f"Already cloned, switching to {local_path}"))
+                    output_cd(local_path)
+                    return
             repos_to_clone = [selected]
 
     # Determine destination
@@ -547,8 +559,13 @@ def rename(
             click.echo(style_error("Failed to rename on GitHub"), err=True)
             if not github_only and old_path and new_path:
                 # Revert local rename
-                new_path.rename(old_path)
-                click.echo(style_warn("Reverted local rename"))
+                try:
+                    new_path.rename(old_path)
+                    click.echo(style_warn("Reverted local rename"))
+                except OSError as e:
+                    click.echo(
+                        style_error(f"Failed to revert local rename: {e}"), err=True
+                    )
             sys.exit(1)
 
         click.echo(style_success("Renamed on GitHub"))
@@ -557,14 +574,21 @@ def rename(
         if not github_only and new_path:
             viewer = run_gh("api", "user", "--jq", ".login")
             if viewer:
-                new_url = f"git@github.com:{viewer.strip()}/{new_name}.git"
-                subprocess.run(
-                    ["git", "remote", "set-url", "origin", new_url],
-                    cwd=new_path,
-                    check=False,
-                    capture_output=True,
-                )
-                click.echo(style_info(f"Updated remote URL to {new_url}"))
+                # Validate the viewer login before using in URL
+                try:
+                    validated_viewer = validate_github_owner(viewer.strip())
+                    new_url = f"git@github.com:{validated_viewer}/{new_name}.git"
+                    subprocess.run(
+                        ["git", "remote", "set-url", "origin", new_url],
+                        cwd=new_path,
+                        check=False,
+                        capture_output=True,
+                    )
+                    click.echo(style_info(f"Updated remote URL to {new_url}"))
+                except ValidationError as e:
+                    click.echo(
+                        style_warn(f"Could not update remote URL: {e}"), err=True
+                    )
 
     if not github_only and new_path:
         output_cd(new_path)

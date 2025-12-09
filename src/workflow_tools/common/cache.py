@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
+
+T = TypeVar("T")
 
 
 class JSONCache:
@@ -35,7 +38,7 @@ class JSONCache:
         except OSError:
             return False
 
-    def get(self) -> Any | None:
+    def get(self) -> Any:
         """Get cached data if valid, else None."""
         if not self.is_valid():
             return None
@@ -56,7 +59,7 @@ class JSONCache:
         except OSError:
             pass
 
-    def get_or_compute(self, compute_fn: Any) -> Any:
+    def get_or_compute(self, compute_fn: Callable[[], T]) -> T:
         """Get cached data or compute and cache it.
 
         Args:
@@ -64,7 +67,7 @@ class JSONCache:
         """
         data = self.get()
         if data is not None:
-            return data
+            return cast("T", data)
         data = compute_fn()
         self.set(data)
         return data
