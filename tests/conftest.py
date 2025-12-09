@@ -47,12 +47,6 @@ def mock_subprocess_run(mocker: Any) -> MagicMock:
 
 
 @pytest.fixture
-def cache_file(tmp_path: Path) -> Path:
-    """Return a temporary cache file path."""
-    return tmp_path / "cache" / "test_cache.json"
-
-
-@pytest.fixture
 def mock_gh_response() -> dict[str, Any]:
     """Sample GitHub CLI response for PR data."""
     return {
