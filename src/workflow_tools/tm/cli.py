@@ -32,6 +32,13 @@ from workflow_tools.common import (
 _TMUX_FIELD_SEP = "\t"
 _TMUX_SESSION_FIELD_COUNT = 3
 
+# Control character boundaries for sanitization
+_CTRL_CHAR_MIN = 32  # First printable ASCII character (space)
+_CTRL_CHAR_DEL = 127  # DEL character
+
+# Maximum input length before sanitization (DoS prevention)
+_MAX_INPUT_LENGTH = 1024
+
 
 class SessionInfo(NamedTuple):
     """Information about a tmux session."""
@@ -50,9 +57,10 @@ def sanitize_session_name(name: str) -> str:
     """Sanitize a string to be a valid tmux session name.
 
     Replaces invalid characters (: . / and whitespace) with hyphens.
+    Returns empty string if input is empty or only invalid chars.
     """
-    # Replace common invalid characters with hyphens
-    for char in [":", ".", "/", "\\", "\t", "\n", "\r"]:
+    # Replace null bytes and common invalid characters with hyphens
+    for char in [":", ".", "/", "\\", "\t", "\n", "\r", "\0"]:
         name = name.replace(char, "-")
     # Collapse multiple hyphens
     while "--" in name:
@@ -184,10 +192,21 @@ def session_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def _strip_control_chars(s: str) -> str:
+    """Strip control characters to prevent terminal escape injection."""
+    # Remove all control characters (0x00-0x1F and 0x7F)
+    return "".join(
+        c for c in s if ord(c) >= _CTRL_CHAR_MIN and ord(c) != _CTRL_CHAR_DEL
+    )
+
+
 def set_terminal_title(session_name: str) -> None:
     """Print escape sequence to set terminal title."""
     hostname = get_hostname()
-    title = f"{session_name}@{hostname}"
+    # Sanitize to prevent escape sequence injection
+    safe_session = _strip_control_chars(session_name)
+    safe_hostname = _strip_control_chars(hostname)
+    title = f"{safe_session}@{safe_hostname}"
     # Print escape sequence to set terminal title
     sys.stdout.write(f"\033]0;{title}\a")
     sys.stdout.flush()
@@ -208,9 +227,27 @@ def run_tmux_new(session_name: str) -> None:
     """Create and attach to a new tmux session, replacing current process.
 
     Sanitizes the session name first, then validates as a safety check.
+    This function does not return - it replaces the current process with tmux.
     """
+    original_name = session_name
+
+    # Early length check before sanitization to prevent DoS
+    if len(session_name) > _MAX_INPUT_LENGTH:
+        click.echo(style_error("Session name too long"), err=True)
+        sys.exit(1)
+
     # Sanitize first (convert invalid chars to hyphens)
     session_name = sanitize_session_name(session_name)
+
+    # Handle empty result after sanitization
+    if not session_name:
+        click.echo(
+            style_error(
+                f"Invalid session name: {original_name!r} (no valid characters)"
+            ),
+            err=True,
+        )
+        sys.exit(1)
 
     # Validate as safety check
     try:
@@ -218,6 +255,10 @@ def run_tmux_new(session_name: str) -> None:
     except ValidationError as e:
         click.echo(style_error(str(e)), err=True)
         sys.exit(1)
+
+    # Notify user if name was changed
+    if session_name != original_name:
+        click.echo(style_dim(f"  (sanitized to '{session_name}')"))
 
     set_terminal_title(session_name)
     # Use exec to replace current process with tmux
