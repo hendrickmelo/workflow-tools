@@ -24,6 +24,8 @@ from workflow_tools.common import (
     style_warn,
 )
 
+# Colors used for list output (not fuzzy picker)
+
 # Number of fields in tmux session format string
 _SESSION_FORMAT_FIELDS = 3
 
@@ -56,6 +58,71 @@ def is_tmux_installed() -> bool:
         ["which", "tmux"], capture_output=True, check=False, text=True
     )
     return result.returncode == 0
+
+
+def is_inside_tmux() -> bool:
+    """Check if we're running inside a tmux session."""
+    return "TMUX" in os.environ
+
+
+def get_current_session_name() -> str | None:
+    """Get the name of the current tmux session (if inside one)."""
+    if not is_inside_tmux():
+        return None
+    result = subprocess.run(
+        ["tmux", "display-message", "-p", "#{session_name}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    return None
+
+
+def print_current_session_info() -> None:
+    """Print information about the current tmux session."""
+    session_name = get_current_session_name()
+    if not session_name:
+        click.echo(style_error("Could not determine current session"), err=True)
+        return
+
+    # Get detailed session info
+    sessions = list_sessions()
+    current = next((s for s in sessions if s.name == session_name), None)
+
+    hostname = get_hostname()
+    click.echo(style_info(f"Inside tmux session: {session_name}@{hostname}"))
+    if current:
+        click.echo(style_dim(f"  Windows: {current.windows}"))
+        click.echo(
+            style_dim(f"  Clients: {'attached' if current.attached else 'detached'}")
+        )
+
+
+def require_outside_tmux(command: str | None = None) -> bool:
+    """Check if inside tmux and print error if so. Returns True if inside tmux."""
+    if is_inside_tmux():
+        session_name = get_current_session_name()
+        hostname = get_hostname()
+        if command:
+            click.echo(
+                style_error(
+                    f"Cannot run 'tm {command}' from inside tmux session: "
+                    f"{session_name}@{hostname}"
+                ),
+                err=True,
+            )
+        else:
+            click.echo(
+                style_error(
+                    f"Cannot run 'tm' from inside tmux session: "
+                    f"{session_name}@{hostname}"
+                ),
+                err=True,
+            )
+        return True
+    return False
 
 
 def list_sessions() -> list[SessionInfo]:
@@ -104,7 +171,7 @@ def session_exists(name: str) -> bool:
 def set_terminal_title(session_name: str) -> None:
     """Print escape sequence to set terminal title."""
     hostname = get_hostname()
-    title = f"{hostname}-{session_name}"
+    title = f"{session_name}@{hostname}"
     # Print escape sequence to set terminal title
     sys.stdout.write(f"\033]0;{title}\a")
     sys.stdout.flush()
@@ -125,14 +192,9 @@ def run_tmux_new(session_name: str) -> None:
 
 
 def format_session_option(session: SessionInfo) -> str:
-    """Format a session for display in picker."""
-    name_styled = click.style(session.name, fg=CYAN, bold=True)
-    if session.attached:
-        status = click.style("[attached]", fg=GREEN)
-    else:
-        status = click.style("[detached]", fg=YELLOW)
-    windows = click.style(f"({session.windows} windows)", fg=DIM)
-    return f"{name_styled} {status} {windows}"
+    """Format a session for display in picker (plain text for fuzzy select)."""
+    status = "attached" if session.attached else "detached"
+    return f"{session.name} [{status}] ({session.windows} windows)"
 
 
 def require_tmux() -> None:
@@ -173,6 +235,11 @@ def default_cmd() -> None:
     """Smart default behavior."""
     require_tmux()
 
+    # If inside tmux, show current session info
+    if is_inside_tmux():
+        print_current_session_info()
+        return
+
     # Get current branch name
     suggested = get_suggested_name()
     sessions = list_sessions()
@@ -188,8 +255,7 @@ def default_cmd() -> None:
     if sessions:
         options = [format_session_option(s) for s in sessions]
         # Add create option at the top
-        create_opt = click.style("[+] Create new session", fg=GREEN)
-        options.insert(0, create_opt)
+        options.insert(0, "[+] Create new session")
 
         index = fuzzy_select(options, "Select session")
         if index is None:
@@ -214,8 +280,8 @@ def default_cmd() -> None:
 
     # No sessions - show action menu
     options = [
-        click.style("[+] Create new session", fg=GREEN),
-        click.style("[?] List sessions", fg=CYAN),
+        "[+] Create new session",
+        "[?] List sessions",
     ]
 
     index = fuzzy_select(options, "No sessions found")
@@ -249,6 +315,9 @@ def create(name: str | None) -> None:
         tm c feature           # Create session named 'feature'
     """
     require_tmux()
+
+    if require_outside_tmux("create"):
+        return
 
     if not name:
         suggested = get_suggested_name()
@@ -287,6 +356,9 @@ def attach(name: str | None) -> None:
         tm a feature           # Attach to 'feature'
     """
     require_tmux()
+
+    if require_outside_tmux("attach"):
+        return
 
     sessions = list_sessions()
 
@@ -372,6 +444,9 @@ def kill(name: str | None, *, force: bool) -> None:
         tm k feature -f        # Force kill 'feature' without confirmation
     """
     require_tmux()
+
+    if require_outside_tmux("kill"):
+        return
 
     sessions = list_sessions()
 
