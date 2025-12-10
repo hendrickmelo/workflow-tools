@@ -1,6 +1,6 @@
 # workflow-tools
 
-CLI tools for git workflow: worktrees, PRs, and repository management.
+CLI tools for git workflow: worktrees, PRs, repository management, and tmux sessions.
 
 ## Installation
 
@@ -64,8 +64,29 @@ pr unresolve <id>   # Unresolve thread(s)
 pr reply <id>       # Reply to thread
 ```
 
+### `tm` - Tmux Session Manager
+
+```bash
+tm                  # Smart default: attach to branch-matching session or show picker
+tm create           # Create session (defaults to current branch name)
+tm create <name>    # Create session with specific name
+tm attach           # Interactive picker to attach
+tm attach <name>    # Attach to specific session
+tm list             # List all sessions
+tm kill             # Interactive picker to kill
+tm kill <name>      # Kill specific session
+```
+
+Aliases: `c`, `a`, `ls`, `k`
+
+Features:
+- Git-aware: suggests session names based on current branch
+- Sets terminal title to `sessionname@hostname`
+- Detects when inside tmux and shows current session info
+- Blocks create/attach/kill from inside tmux
+
 ## Shell Integration
 
 Run `workflow-tools install` to enable:
 - Auto-cd after switching repos/worktrees
-- Shell aliases (`wt`, `rp`, `pr`)
+- Shell aliases (`wt`, `rp`, `pr`, `tm`)

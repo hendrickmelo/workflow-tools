@@ -18,27 +18,30 @@ from workflow_tools.common import (
 )
 from workflow_tools.pr.cli import cli as pr_cli
 from workflow_tools.rp.cli import cli as rp_cli
+from workflow_tools.tm.cli import cli as tm_cli
 from workflow_tools.wt.cli import cli as wt_cli
 
 
 @click.group()
 @click.version_option(package_name="workflow-tools")
 def cli() -> None:
-    """Workflow tools: git worktrees, PRs, and repositories.
+    """Workflow tools: git worktrees, PRs, repositories, and tmux sessions.
 
     COMMANDS:
         wt    Git worktree management
         pr    Pull request management
         rp    Repository discovery and management
+        tm    Tmux session management
 
     EXAMPLES:
         workflow-tools wt           # Interactive worktree picker
         workflow-tools pr           # Show PR for current branch
         workflow-tools rp           # Interactive repo picker
+        workflow-tools tm           # Smart tmux session attach/create
         workflow-tools install      # Install shell integration
 
     After installing shell integration, use short aliases:
-        wt, pr, rp
+        wt, pr, rp, tm
     """
 
 
@@ -46,6 +49,7 @@ def cli() -> None:
 cli.add_command(wt_cli, name="wt")
 cli.add_command(pr_cli, name="pr")
 cli.add_command(rp_cli, name="rp")
+cli.add_command(tm_cli, name="tm")
 
 
 @cli.command()
@@ -158,6 +162,11 @@ rp() {{
     fi
     return $exit_code
 }}
+
+# tm: tmux session management
+tm() {{
+    "{binary}" tm "$@"
+}}
 """
     # bash
     return f"""
@@ -192,6 +201,11 @@ rp() {{
         rm -f "$RP_CD_FILE"
     fi
     return $exit_code
+}}
+
+# tm: tmux session management
+tm() {{
+    "{binary}" tm "$@"
 }}
 """
 

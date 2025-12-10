@@ -10,6 +10,9 @@ from pathlib import Path
 GITHUB_OWNER_MAX_LENGTH = 39
 GITHUB_REPO_MAX_LENGTH = 100
 
+# Tmux limits
+TMUX_SESSION_NAME_MAX_LENGTH = 256
+
 
 class ValidationError(Exception):
     """Raised when input validation fails."""
@@ -183,6 +186,38 @@ def validate_temp_path(path_str: str) -> Path:
         ) from e
 
     return resolved
+
+
+def validate_tmux_session_name(name: str) -> str:
+    """Validate tmux session name.
+
+    Tmux session names cannot contain colons or periods (used as separators).
+    We also block other potentially problematic characters for safety.
+
+    Returns validated name or raises ValidationError.
+    """
+    if not name:
+        raise ValidationError("Session name cannot be empty")
+
+    # Tmux uses : and . as separators (session:window.pane)
+    # Also block other shell-sensitive characters
+    forbidden = [":", ".", "\n", "\r", "\t", "\0"]
+    for char in forbidden:
+        if char in name:
+            char_repr = repr(char) if char.isprintable() else f"\\x{ord(char):02x}"
+            raise ValidationError(f"Invalid session name: contains {char_repr}")
+
+    # Block empty or whitespace-only names
+    if not name.strip():
+        raise ValidationError("Session name cannot be empty or whitespace-only")
+
+    # Reasonable length limit
+    if len(name) > TMUX_SESSION_NAME_MAX_LENGTH:
+        raise ValidationError(
+            f"Session name too long (max {TMUX_SESSION_NAME_MAX_LENGTH} characters)"
+        )
+
+    return name
 
 
 def parse_github_url(url: str) -> tuple[str, str] | None:

@@ -78,7 +78,7 @@ module = "InquirerPy.*"
 ignore_missing_imports = true
 
 # Pixi
-[tool.pixi.project]
+[tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
