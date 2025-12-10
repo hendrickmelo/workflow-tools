@@ -13,14 +13,20 @@ from workflow_tools.common import (
     DIM,
     GREEN,
     YELLOW,
+    ValidationError,
     copy_to_clipboard,
     fuzzy_select,
+    require_repo,
+    run_git,
     style_dim,
     style_error,
     style_info,
     style_success,
     style_warn,
+    validate_pr_number,
+    validate_worktree_name,
 )
+from workflow_tools.common.shell import output_cd
 from workflow_tools.common.ui import fuzzy_select_multi
 from workflow_tools.pr.api import (
     ActionResult,
@@ -48,6 +54,7 @@ from workflow_tools.pr.api import (
     submit_pending_review,
     unresolve_thread,
 )
+from workflow_tools.wt.cli import create_worktree, get_worktree_path
 
 # Preview truncation lengths
 PREVIEW_SHORT = 40
@@ -139,6 +146,8 @@ def cli(ctx: click.Context, pr_num: int | None) -> None:
         pr a  = pr approve
         pr rc = pr request-changes
         pr o  = pr open
+        pr co = pr checkout
+        pr sw = pr checkout
     """
     ctx.ensure_object(dict)
     ctx.obj["pr_num"] = pr_num
@@ -199,6 +208,7 @@ def interactive_mode(ctx: click.Context) -> None:
         "[f] View files",
         "[d] View diff",
         "[o] Open in browser",
+        "[w] Create worktree",
         "[r] Resolve threads",
         "[y] Reply to thread",
         "[c] Post comment",
@@ -228,6 +238,9 @@ def interactive_mode(ctx: click.Context) -> None:
             ctx.invoke(diff, pr_num=pr.number)
         elif "[o]" in action:
             ctx.invoke(open_cmd, pr_num=pr.number)
+        elif "[w]" in action:
+            ctx.invoke(checkout_cmd, pr_num=pr.number)
+            return  # Exit after creating worktree (we've cd'd away)
         elif "[r]" in action:
             ctx.obj["pr_num"] = pr.number
             ctx.invoke(resolve)
@@ -794,6 +807,80 @@ def open_cmd(ctx: click.Context, pr_num: int | None) -> None:
             click.echo(style_dim("  (copied to clipboard)"))
 
 
+@cli.command("checkout")
+@click.argument("pr_num", type=int, required=False)
+@click.argument("name", required=False)
+@click.pass_context
+def checkout_cmd(ctx: click.Context, pr_num: int | None, name: str | None) -> None:
+    """Create a worktree for the PR's branch.
+
+    Fetches the PR's head branch and creates a new worktree for it.
+    If a worktree already exists for the branch, switches to it and pulls
+    the latest changes.
+
+    EXAMPLES:
+        pr checkout          # Create worktree for current branch's PR
+        pr checkout 123      # Create worktree for PR #123
+        pr co 123 review     # Create worktree named 'review' for PR #123
+    """
+    pr = get_pr_or_exit(pr_num, ctx.obj.get("pr_num"))
+    repo_root = require_repo()
+
+    # Validate PR number
+    try:
+        validated_pr_num = validate_pr_number(pr.number)
+    except ValidationError as e:
+        click.echo(style_error(str(e)), err=True)
+        sys.exit(1)
+
+    # Use branch name as default worktree name
+    if not name:
+        suggested = pr.head_branch.replace("/", "-")
+        name = click.prompt(
+            click.style("  Worktree name", fg=CYAN),
+            default=suggested,
+            prompt_suffix=" → ",
+        )
+
+    # Validate worktree name
+    try:
+        name = validate_worktree_name(name)
+    except ValidationError as e:
+        click.echo(style_error(str(e)), err=True)
+        sys.exit(1)
+
+    # Check if worktree already exists
+    worktree_path = get_worktree_path(repo_root, name)
+    if worktree_path.exists():
+        click.echo(style_info(f"Worktree '{name}' already exists, switching to it..."))
+        # Pull latest changes
+        click.echo(style_info("Pulling latest changes..."))
+        pull_result = run_git("pull", "--ff-only", cwd=worktree_path)
+        if pull_result is None:
+            click.echo(style_warn("Could not pull (may have local changes)"))
+        else:
+            click.echo(style_success("Updated to latest"))
+        output_cd(worktree_path)
+        return
+
+    # Fetch the PR branch
+    click.echo(style_info(f"Fetching PR #{validated_pr_num}..."))
+    fetch_result = run_git(
+        "fetch",
+        "origin",
+        f"pull/{validated_pr_num}/head:{pr.head_branch}",
+        cwd=repo_root,
+    )
+    if fetch_result is None:
+        click.echo(style_error(f"Failed to fetch PR #{validated_pr_num}"), err=True)
+        sys.exit(1)
+
+    # Create the worktree
+    created_path = create_worktree(repo_root, name, pr.head_branch, new_branch=False)
+    if created_path:
+        output_cd(created_path)
+
+
 @cli.command()
 @click.argument("pr_num", type=int, required=False)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
@@ -831,6 +918,8 @@ cli.add_command(comment, name="c")
 cli.add_command(approve, name="a")
 cli.add_command(request_changes_cmd, name="rc")
 cli.add_command(open_cmd, name="o")
+cli.add_command(checkout_cmd, name="co")
+cli.add_command(checkout_cmd, name="sw")
 
 
 if __name__ == "__main__":

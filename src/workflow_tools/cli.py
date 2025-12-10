@@ -146,9 +146,16 @@ wt() {{
     return $exit_code
 }}
 
-# pr: pull request management
+# pr: pull request management with cd support (for pr checkout)
 pr() {{
+    rm -f "$WT_CD_FILE"
     "{binary}" pr "$@"
+    local exit_code=$?
+    if [[ -f "$WT_CD_FILE" ]]; then
+        cd "$(cat "$WT_CD_FILE")"
+        rm -f "$WT_CD_FILE"
+    fi
+    return $exit_code
 }}
 
 # rp: repository management with cd support
@@ -186,9 +193,16 @@ wt() {{
     return $exit_code
 }}
 
-# pr: pull request management
+# pr: pull request management with cd support (for pr checkout)
 pr() {{
+    rm -f "$WT_CD_FILE"
     "{binary}" pr "$@"
+    local exit_code=$?
+    if [[ -f "$WT_CD_FILE" ]]; then
+        cd "$(cat "$WT_CD_FILE")"
+        rm -f "$WT_CD_FILE"
+    fi
+    return $exit_code
 }}
 
 # rp: repository management with cd support
