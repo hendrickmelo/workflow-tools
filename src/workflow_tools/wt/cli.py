@@ -265,7 +265,8 @@ def cli(ctx: click.Context) -> None:
         wt fork             # Create worktree with new branch
         wt list             # List all worktrees
         wt remove foo       # Remove worktree 'foo'
-        wt cleanup          # Remove current worktree
+        wt remove .         # Remove current worktree
+        wt cleanup          # Remove current worktree + delete branch
 
     ALIASES:
         wt sw = wt switch
@@ -621,10 +622,12 @@ def remove(name: str | None, *, force: bool) -> None:
     """Remove a worktree.
 
     Without NAME, shows interactive picker.
+    Use "." to remove the current worktree.
 
     EXAMPLES:
         wt remove           # Interactive: pick worktree to remove
         wt remove foo       # Remove worktree 'foo'
+        wt remove .         # Remove current worktree
         wt rm foo -f        # Force remove even with uncommitted changes
     """
     repo_root = require_repo()
@@ -652,6 +655,37 @@ def remove(name: str | None, *, force: bool) -> None:
         selected = worktrees[index]
         name = selected.name
         worktree_path = selected.path
+
+        # Confirm removal
+        if not click.confirm(style_warn(f"Remove worktree '{name}'?"), default=False):
+            click.echo(style_dim("Cancelled."))
+            return
+    elif name == ".":
+        # Remove current worktree
+        cwd = Path.cwd().resolve()
+        worktrees = list_worktrees(repo_root)
+
+        # Find current worktree
+        current_wt = None
+        for wt in worktrees:
+            if wt.is_bare:
+                continue
+            wt_path = wt.path.resolve()
+            if cwd == wt_path or str(cwd).startswith(str(wt_path) + os.sep):
+                current_wt = wt
+                break
+
+        if current_wt is None:
+            click.echo(style_error("Not in a worktree."), err=True)
+            sys.exit(1)
+
+        # Check if in main repo
+        if current_wt.path.resolve() == repo_root.resolve():
+            click.echo(style_error("Cannot remove the main repository."), err=True)
+            sys.exit(1)
+
+        name = current_wt.name
+        worktree_path = current_wt.path
 
         # Confirm removal
         if not click.confirm(style_warn(f"Remove worktree '{name}'?"), default=False):
@@ -740,13 +774,16 @@ def path(name: str) -> None:
 
 @cli.command()
 def cleanup() -> None:
-    """Remove the current worktree.
+    """Remove the current worktree and optionally delete its branch.
 
     Prompts for confirmation, checks for uncommitted changes,
-    and switches back to the main repo after removal.
+    switches back to the main repo, and offers to delete the local branch.
+
+    Use 'wt remove .' if you want to remove the worktree without
+    the branch deletion prompt.
 
     EXAMPLES:
-        wt cleanup          # Remove current worktree (with confirmation)
+        wt cleanup          # Remove worktree, prompt to delete branch
     """
     repo_root = require_repo()
     cwd = Path.cwd().resolve()
