@@ -40,11 +40,17 @@ def style_dim(msg: str) -> str:
 
 
 def fuzzy_select(options: list[str], message: str) -> int | None:
-    """Show fuzzy select menu. Returns index or None if cancelled."""
+    """Show fuzzy select menu. Returns index or None if cancelled.
+
+    Uses exact substring matching which gives predictable results -
+    typing a character shows only options containing that character,
+    with matches at the start appearing first.
+    """
     try:
         prompt = inquirer.fuzzy(  # type: ignore[attr-defined]
             message=message,
             choices=options,
+            match_exact=True,  # Substring match gives more predictable results
         )
         result = prompt.execute()
         if result is None:
