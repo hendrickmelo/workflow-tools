@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -34,9 +36,41 @@ def output_cd(path: Path, env_var: str = "WT_CD_FILE") -> None:
     click.echo(f"{CD_MARKER}{path}")
 
 
+def _osc52_copy(text: str) -> bool:
+    """Copy text to clipboard using OSC 52 escape sequence.
+
+    OSC 52 allows copying to the local clipboard even over SSH,
+    supported by many modern terminals (iTerm2, Windows Terminal,
+    Ghostty, Kitty, WezTerm, tmux with allow-passthrough, etc.).
+
+    Returns True (always succeeds in sending the sequence).
+    """
+    # Base64 encode the text
+    encoded = base64.b64encode(text.encode()).decode()
+
+    # OSC 52 format: ESC ] 52 ; c ; <base64> BEL
+    # c = clipboard (as opposed to p = primary selection on Linux)
+    osc52_seq = f"\033]52;c;{encoded}\a"
+
+    # Write directly to terminal (bypass any output buffering)
+    sys.stdout.write(osc52_seq)
+    sys.stdout.flush()
+
+    return True
+
+
 def copy_to_clipboard(text: str) -> bool:
-    """Copy text to clipboard. Returns True on success, False if unavailable."""
-    # Try platform-specific clipboard commands
+    """Copy text to clipboard. Returns True on success, False if unavailable.
+
+    First tries OSC 52 escape sequence (works over SSH in modern terminals),
+    then falls back to platform-specific commands.
+    """
+    # First try OSC 52 - works over SSH in modern terminals
+    # We always try this as it's the most likely to work in SSH sessions
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return _osc52_copy(text)
+
+    # Try platform-specific clipboard commands for local sessions
     clipboard_commands = [
         ["pbcopy"],  # macOS
         ["xclip", "-selection", "clipboard"],  # Linux with xclip
@@ -56,7 +90,8 @@ def copy_to_clipboard(text: str) -> bool:
         except (subprocess.CalledProcessError, FileNotFoundError):
             continue
 
-    return False
+    # Fall back to OSC 52 even for local sessions (terminal might support it)
+    return _osc52_copy(text)
 
 
 # Shell wrapper scripts

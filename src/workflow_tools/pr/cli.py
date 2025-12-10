@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import webbrowser
 
 import click
 
@@ -12,6 +13,7 @@ from workflow_tools.common import (
     DIM,
     GREEN,
     YELLOW,
+    copy_to_clipboard,
     fuzzy_select,
     style_dim,
     style_error,
@@ -136,6 +138,7 @@ def cli(ctx: click.Context, pr_num: int | None) -> None:
         pr c  = pr comment
         pr a  = pr approve
         pr rc = pr request-changes
+        pr o  = pr open
     """
     ctx.ensure_object(dict)
     ctx.obj["pr_num"] = pr_num
@@ -195,6 +198,7 @@ def interactive_mode(ctx: click.Context) -> None:
         f"[t] View threads ({len(unresolved)} unresolved)",
         "[f] View files",
         "[d] View diff",
+        "[o] Open in browser",
         "[r] Resolve threads",
         "[y] Reply to thread",
         "[c] Post comment",
@@ -222,6 +226,8 @@ def interactive_mode(ctx: click.Context) -> None:
             ctx.invoke(files, pr_num=pr.number)
         elif "[d]" in action:
             ctx.invoke(diff, pr_num=pr.number)
+        elif "[o]" in action:
+            ctx.invoke(open_cmd, pr_num=pr.number)
         elif "[r]" in action:
             ctx.obj["pr_num"] = pr.number
             ctx.invoke(resolve)
@@ -761,6 +767,33 @@ def draft_cmd(ctx: click.Context, pr_num: int | None) -> None:
     print_action_results([result])
 
 
+@cli.command("open")
+@click.argument("pr_num", type=int, required=False)
+@click.pass_context
+def open_cmd(ctx: click.Context, pr_num: int | None) -> None:
+    """Open the PR in the default web browser.
+
+    Uses Python's webbrowser module which respects the $BROWSER environment
+    variable. Works automatically in VS Code Remote SSH sessions.
+    Falls back to copying the URL to clipboard if browser can't be opened.
+
+    EXAMPLES:
+        pr open          # Open current branch's PR
+        pr open 123      # Open PR #123
+        pr o             # Short alias
+    """
+    pr = get_pr_or_exit(pr_num, ctx.obj.get("pr_num"))
+    click.echo(style_info(f"Opening PR #{pr.number} in browser..."))
+    click.echo(f"  {pr.url}")
+
+    try:
+        webbrowser.open(pr.url)
+    except Exception:
+        # Browser opening failed, copy to clipboard as fallback
+        if copy_to_clipboard(pr.url):
+            click.echo(style_dim("  (copied to clipboard)"))
+
+
 @cli.command()
 @click.argument("pr_num", type=int, required=False)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
@@ -797,6 +830,7 @@ cli.add_command(reply, name="re")
 cli.add_command(comment, name="c")
 cli.add_command(approve, name="a")
 cli.add_command(request_changes_cmd, name="rc")
+cli.add_command(open_cmd, name="o")
 
 
 if __name__ == "__main__":
