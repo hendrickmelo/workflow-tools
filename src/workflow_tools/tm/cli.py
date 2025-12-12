@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from typing import NamedTuple
 
 import click
@@ -39,6 +40,9 @@ _CTRL_CHAR_DEL = 127  # DEL character
 # Maximum input length before sanitization (DoS prevention)
 _MAX_INPUT_LENGTH = 1024
 
+# Maximum number of extended session names to try (e.g., foo.2, foo.3, ...)
+_MAX_EXTENDED_SESSION_COUNTER = 100
+
 
 class SessionInfo(NamedTuple):
     """Information about a tmux session."""
@@ -46,6 +50,13 @@ class SessionInfo(NamedTuple):
     name: str
     attached: bool
     windows: int
+
+
+class AttachAction(NamedTuple):
+    """Action to take when attaching to a session."""
+
+    action: str  # "new_window", "detach_other", "join"
+    new_session_name: str | None = None  # For "new_window" action
 
 
 def get_hostname() -> str:
@@ -192,6 +203,94 @@ def session_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def get_session_info(name: str) -> SessionInfo | None:
+    """Get info for a specific session, or None if it doesn't exist."""
+    sessions = list_sessions()
+    return next((s for s in sessions if s.name == name), None)
+
+
+def find_next_extended_name(base_name: str) -> str:
+    """Find the next available extended session name (e.g., foo.2, foo.3).
+
+    If the base session is 'foo', checks for 'foo.2', 'foo.3', etc.
+    and returns the first one that doesn't exist.
+    """
+    # Start at .2 (the original is implicitly .1)
+    counter = 2
+    while True:
+        extended_name = f"{base_name}.{counter}"
+        if not session_exists(extended_name):
+            return extended_name
+        counter += 1
+        # Safety limit to prevent infinite loops
+        if counter > _MAX_EXTENDED_SESSION_COUNTER:
+            # Fall back to timestamp-based name
+            return f"{base_name}.{int(time.time())}"
+
+
+def prompt_attach_options(session_name: str) -> AttachAction | None:
+    """Prompt user for action when attaching to an already-attached session.
+
+    Returns AttachAction describing what to do, or None if cancelled.
+    """
+    extended_name = find_next_extended_name(session_name)
+
+    options = [
+        f"[+] Create new window ({extended_name})",
+        "[D] Detach other client and attach",
+        "[J] Join session (share with other client)",
+    ]
+
+    click.echo(style_warn(f"Session '{session_name}' is already attached."))
+    index = fuzzy_select(options, "How do you want to attach?")
+
+    if index is None:
+        return None
+    if index == 0:
+        return AttachAction(action="new_window", new_session_name=extended_name)
+    if index == 1:
+        return AttachAction(action="detach_other")
+    return AttachAction(action="join")
+
+
+def attach_to_session(session_name: str) -> None:
+    """Attach to a session, prompting for options if already attached.
+
+    This is the main entry point for attaching to sessions. It checks if
+    the session is already attached and prompts the user for how to proceed.
+    """
+    session_info = get_session_info(session_name)
+
+    if session_info is None:
+        click.echo(style_error(f"Session '{session_name}' not found."), err=True)
+        sys.exit(1)
+
+    if not session_info.attached:
+        # Session is not attached, just attach directly
+        click.echo(style_info(f"Attaching to session '{session_name}'..."))
+        run_tmux_attach(session_name)
+        return
+
+    # Session is attached, prompt for action
+    action = prompt_attach_options(session_name)
+
+    if action is None:
+        click.echo(style_dim("Cancelled."))
+        return
+
+    if action.action == "new_window":
+        click.echo(
+            style_success(f"Creating grouped session '{action.new_session_name}'...")
+        )
+        run_tmux_new_grouped(action.new_session_name, session_name)  # type: ignore[arg-type]
+    elif action.action == "detach_other":
+        click.echo(style_info("Detaching other client and attaching..."))
+        run_tmux_attach(session_name, detach_other=True)
+    else:  # join
+        click.echo(style_info(f"Joining session '{session_name}'..."))
+        run_tmux_attach(session_name)
+
+
 def _strip_control_chars(s: str) -> str:
     """Strip control characters to prevent terminal escape injection."""
     # Remove all control characters (0x00-0x1F and 0x7F)
@@ -212,15 +311,41 @@ def set_terminal_title(session_name: str) -> None:
     sys.stdout.flush()
 
 
-def run_tmux_attach(session_name: str) -> None:
+def run_tmux_attach(session_name: str, *, detach_other: bool = False) -> None:
     """Attach to a tmux session, replacing current process.
 
     Note: For attach, we don't sanitize because the session already exists
     with whatever name it has (possibly created outside tm).
+
+    Args:
+        session_name: Name of the session to attach to
+        detach_other: If True, detach other clients before attaching (-d flag)
     """
     set_terminal_title(session_name)
     # Use exec to replace current process with tmux
-    os.execlp("tmux", "tmux", "attach-session", "-t", session_name)
+    if detach_other:
+        os.execlp("tmux", "tmux", "attach-session", "-d", "-t", session_name)
+    else:
+        os.execlp("tmux", "tmux", "attach-session", "-t", session_name)
+
+
+def run_tmux_new_grouped(new_session_name: str, target_session: str) -> None:
+    """Create a new session grouped with an existing session, replacing current process.
+
+    This creates a new session that shares windows with the target session,
+    allowing independent window selection while sharing the same windows.
+    """
+    set_terminal_title(new_session_name)
+    # Create a new session grouped with the target session
+    os.execlp(
+        "tmux",
+        "tmux",
+        "new-session",
+        "-t",
+        target_session,
+        "-s",
+        new_session_name,
+    )
 
 
 def run_tmux_new(session_name: str) -> None:
@@ -321,8 +446,7 @@ def default_cmd() -> None:
     # If matching session exists, auto-attach
     matching = [s for s in sessions if s.name == suggested]
     if matching:
-        click.echo(style_info(f"Attaching to session '{suggested}'..."))
-        run_tmux_attach(suggested)
+        attach_to_session(suggested)
         return
 
     # If sessions exist, show picker
@@ -348,8 +472,7 @@ def default_cmd() -> None:
         else:
             # Attach to selected session
             selected = sessions[index - 1]
-            click.echo(style_info(f"Attaching to session '{selected.name}'..."))
-            run_tmux_attach(selected.name)
+            attach_to_session(selected.name)
         return
 
     # No sessions - show action menu
@@ -407,8 +530,7 @@ def create(name: str | None) -> None:
             style_warn(f"Session '{name}' already exists. Attach to it?"),
             default=True,
         ):
-            click.echo(style_info(f"Attaching to session '{name}'..."))
-            run_tmux_attach(name)
+            attach_to_session(name)
         else:
             click.echo(style_dim("Cancelled."))
         return
@@ -451,19 +573,14 @@ def attach(name: str | None) -> None:
 
     if name:
         # Direct attach
-        if not session_exists(name):
-            click.echo(style_error(f"Session '{name}' not found."), err=True)
-            sys.exit(1)
-        click.echo(style_info(f"Attaching to session '{name}'..."))
-        run_tmux_attach(name)
+        attach_to_session(name)
         return
 
     # Interactive mode
     if len(sessions) == 1:
         # Only one session, attach directly
         session = sessions[0]
-        click.echo(style_info(f"Attaching to session '{session.name}'..."))
-        run_tmux_attach(session.name)
+        attach_to_session(session.name)
         return
 
     # Multiple sessions, show picker
@@ -474,8 +591,7 @@ def attach(name: str | None) -> None:
         return
 
     selected = sessions[index]
-    click.echo(style_info(f"Attaching to session '{selected.name}'..."))
-    run_tmux_attach(selected.name)
+    attach_to_session(selected.name)
 
 
 @cli.command("list")
