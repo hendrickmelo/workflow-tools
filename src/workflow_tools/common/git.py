@@ -95,7 +95,7 @@ def fetch_origin(repo_root: Path) -> bool:
     """Fetch from origin. Returns True on success."""
     click.echo(style_info("Fetching from origin..."))
     result = subprocess.run(
-        ["git", "fetch", "origin"],
+        ["git", "fetch", "--prune", "origin"],
         check=False,
         cwd=repo_root,
         capture_output=True,
