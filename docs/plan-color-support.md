@@ -242,3 +242,102 @@ wt color blue
 wt color green
 # No prompt (pattern already in .gitignore)
 ```
+
+---
+
+## Enhancement: Remember "No" Answer for Session
+
+### Goal
+When user declines to add the pattern to `.gitignore`, remember that choice for the rest of the shell session so they're not prompted again.
+
+### Approach
+Extend the shell wrapper pattern used for `cd` support. The wrapper already:
+1. Sets up temp files (e.g., `WT_CD_FILE`)
+2. Runs the Python command
+3. Reads the temp file and acts on it (cd)
+
+We'll add a similar mechanism for environment variables:
+1. Add `WT_ENV_FILE` temp file
+2. Python writes `export VAR=value` to this file when needed
+3. Shell wrapper sources the file after command completes
+
+### Environment Variable
+```bash
+WT_GITIGNORE_SKIP=1  # Set when user declines gitignore prompt
+```
+
+### Changes to Shell Wrapper (`cli.py`)
+
+Update `_get_shell_wrapper()` to add env file support:
+
+```bash
+export WT_ENV_FILE="${TMPDIR:-/tmp}/.wt_env_$$"
+
+wt() {
+    rm -f "$WT_CD_FILE" "$WT_ENV_FILE"
+    "workflow-tools" wt "$@"
+    local exit_code=$?
+    [[ -f "$WT_ENV_FILE" ]] && source "$WT_ENV_FILE" && rm -f "$WT_ENV_FILE"
+    [[ -f "$WT_CD_FILE" ]] && cd "$(cat "$WT_CD_FILE")" && rm -f "$WT_CD_FILE"
+    return $exit_code
+}
+```
+
+### Changes to `shell.py`
+
+Add function to write environment variables:
+
+```python
+def output_env(var: str, value: str, env_var: str = "WT_ENV_FILE") -> None:
+    """Write an export statement to env file for shell wrapper."""
+```
+
+### Changes to `wt/cli.py`
+
+Modify `ensure_workspace_in_gitignore()`:
+
+```python
+def ensure_workspace_in_gitignore(worktree_path: Path) -> None:
+    # Check if user already declined this session
+    if os.environ.get("WT_GITIGNORE_SKIP"):
+        return
+
+    if is_pattern_in_gitignore(repo_root, WORKSPACE_GITIGNORE_PATTERN):
+        return
+
+    if click.confirm(...):
+        add_pattern_to_gitignore(...)
+    else:
+        # Remember choice for session
+        output_env("WT_GITIGNORE_SKIP", "1")
+```
+
+### Implementation Steps
+
+1. Update plan (this section)
+2. Add `output_env()` to `shell.py`
+3. Export `output_env` from `common/__init__.py`
+4. Update shell wrapper in `cli.py` to handle `WT_ENV_FILE`
+5. Modify `ensure_workspace_in_gitignore()` to check/set env var
+6. Run `pixi run cleanup`
+7. Reinstall and re-source shell
+
+### Verification
+
+```bash
+# Source new shell wrapper
+source ~/.zshrc
+
+# First time - should prompt
+wt color blue
+# Answer 'n' to gitignore prompt
+
+# Second time in same session - should NOT prompt
+wt color green
+# No prompt (WT_GITIGNORE_SKIP is set)
+
+# New shell session - should prompt again
+# (open new terminal)
+wt color red
+# Prompt appears again
+```

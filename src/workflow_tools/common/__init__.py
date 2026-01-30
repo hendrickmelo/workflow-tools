@@ -22,7 +22,7 @@ from workflow_tools.common.git import (
     run_git,
 )
 from workflow_tools.common.github import run_gh
-from workflow_tools.common.shell import copy_to_clipboard, output_cd
+from workflow_tools.common.shell import copy_to_clipboard, output_cd, output_env
 from workflow_tools.common.ui import (
     BOLD,
     CYAN,
@@ -74,6 +74,7 @@ __all__ = [
     "is_pattern_in_gitignore",
     "list_branches",
     "output_cd",
+    "output_env",
     "parse_github_url",
     "read_workspace_color",
     "require_repo",

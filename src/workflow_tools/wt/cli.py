@@ -43,6 +43,7 @@ from workflow_tools.common import (
 )
 from workflow_tools.common.git import fetch_origin, is_repo_dirty
 from workflow_tools.common.shell import output_cd as _output_cd
+from workflow_tools.common.shell import output_env
 from workflow_tools.pr.api import list_prs_simple
 
 
@@ -543,6 +544,10 @@ def list_cmd() -> None:
 
 def ensure_workspace_in_gitignore(worktree_path: Path) -> None:
     """Check if workspace pattern is in .gitignore, prompt to add if not."""
+    # Check if user already declined this session
+    if os.environ.get("WT_GITIGNORE_SKIP"):
+        return
+
     repo_root = worktree_path  # worktree root is the repo root for gitignore purposes
 
     if is_pattern_in_gitignore(repo_root, WORKSPACE_GITIGNORE_PATTERN):
@@ -554,6 +559,9 @@ def ensure_workspace_in_gitignore(worktree_path: Path) -> None:
     ):
         add_pattern_to_gitignore(repo_root, WORKSPACE_GITIGNORE_PATTERN)
         click.echo(style_success(f"Added {WORKSPACE_GITIGNORE_PATTERN} to .gitignore"))
+    else:
+        # Remember choice for the rest of this shell session
+        output_env("WT_GITIGNORE_SKIP", "1")
 
 
 def apply_worktree_color(worktree_path: Path) -> None:
