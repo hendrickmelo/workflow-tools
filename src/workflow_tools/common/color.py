@@ -121,6 +121,8 @@ def create_workspace_file(worktree_path: Path, hex_color: str) -> Path:
                 "titleBar.activeForeground": fg_color,
                 "titleBar.inactiveBackground": f"#{dark_color}",
                 "titleBar.inactiveForeground": fg_color,
+                "statusBar.background": f"#{dark_color}",
+                "statusBar.foreground": fg_color,
             }
         },
     }
