@@ -1,5 +1,15 @@
 """Shared utilities for workflow tools."""
 
+from workflow_tools.common.color import (
+    COLOR_PRESETS,
+    create_workspace_file,
+    delete_workspace_file,
+    find_workspace_file,
+    get_random_preset,
+    read_workspace_color,
+    resolve_color,
+    set_iterm_tab_color,
+)
 from workflow_tools.common.git import (
     find_repo_root,
     get_current_branch,
@@ -40,6 +50,7 @@ from workflow_tools.common.validate import (
 
 __all__ = [
     "BOLD",
+    "COLOR_PRESETS",
     "CYAN",
     "DIM",
     "GREEN",
@@ -47,17 +58,24 @@ __all__ = [
     "YELLOW",
     "ValidationError",
     "copy_to_clipboard",
+    "create_workspace_file",
+    "delete_workspace_file",
     "find_repo_root",
+    "find_workspace_file",
     "fuzzy_select",
     "get_current_branch",
     "get_default_branch",
+    "get_random_preset",
     "list_branches",
     "output_cd",
     "parse_github_url",
+    "read_workspace_color",
     "require_repo",
+    "resolve_color",
     "run_gh",
     "run_git",
     "select_from_menu",
+    "set_iterm_tab_color",
     "style_dim",
     "style_error",
     "style_info",

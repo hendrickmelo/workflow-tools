@@ -11,17 +11,25 @@ from typing import NamedTuple
 import click
 
 from workflow_tools.common import (
+    COLOR_PRESETS,
     CYAN,
     DIM,
     GREEN,
     YELLOW,
     ValidationError,
+    create_workspace_file,
+    delete_workspace_file,
+    find_workspace_file,
     fuzzy_select,
     get_default_branch,
+    get_random_preset,
     list_branches,
+    read_workspace_color,
     require_repo,
+    resolve_color,
     run_git,
     select_from_menu,
+    set_iterm_tab_color,
     style_dim,
     style_error,
     style_info,
@@ -530,6 +538,18 @@ def list_cmd() -> None:
         click.echo(f"  {name_styled:30} {branch_styled:40} {path_styled}")
 
 
+def apply_worktree_color(worktree_path: Path) -> None:
+    """Apply color for a worktree, creating workspace file if needed."""
+    color_hex = read_workspace_color(worktree_path)
+    if color_hex is None:
+        # First switch - assign random color
+        preset = get_random_preset()
+        color_hex = COLOR_PRESETS[preset]
+        create_workspace_file(worktree_path, color_hex)
+        click.echo(style_info(f"Assigned color: {preset}"))
+    set_iterm_tab_color(color_hex)
+
+
 @cli.command("switch")
 @click.argument("name", required=False)
 def switch_cmd(name: str | None) -> None:
@@ -553,6 +573,7 @@ def switch_cmd(name: str | None) -> None:
             )
             sys.exit(1)
         output_cd(worktree_path)
+        apply_worktree_color(worktree_path)
         return
 
     # Interactive mode
@@ -577,6 +598,7 @@ def switch_cmd(name: str | None) -> None:
 
     selected = worktrees[index]
     output_cd(selected.path)
+    apply_worktree_color(selected.path)
 
 
 def do_remove_worktree(
@@ -849,6 +871,118 @@ def cleanup() -> None:
                         style_error(f"Failed to delete branch '{branch_to_delete}'"),
                         err=True,
                     )
+
+
+@cli.command("color")
+@click.argument("color", required=False)
+def color_cmd(color: str | None) -> None:
+    """Set worktree color for iTerm2 tab and VS Code workspace.
+
+    COLOR can be a preset (red, green, blue, yellow, orange, purple, pink, cyan),
+    a 6-digit hex code, or 'reset' to clear.
+
+    EXAMPLES:
+        wt color            # Show current color and available presets
+        wt color blue       # Set color to blue preset
+        wt color CC3333     # Set color to custom hex
+        wt color reset      # Reset color (remove workspace file)
+    """
+    cwd = Path.cwd()
+
+    if color is None:
+        # Show current color and usage
+        current_color = read_workspace_color(cwd)
+        if current_color:
+            click.echo(f"Current color: #{current_color}")
+            set_iterm_tab_color(current_color)
+        else:
+            click.echo("No color set for this worktree.")
+
+        click.echo()
+        click.echo("Available presets:")
+        for name, hex_val in COLOR_PRESETS.items():
+            click.echo(f"  {name:10} #{hex_val}")
+        click.echo()
+        click.echo("Usage: wt color <preset|hex|reset>")
+        return
+
+    if color.lower() == "reset":
+        # Reset color - delete workspace file and reset iTerm2
+        if delete_workspace_file(cwd):
+            click.echo(style_success("Removed workspace file"))
+        else:
+            click.echo(style_dim("No workspace file to remove"))
+        set_iterm_tab_color(None)
+        click.echo(style_success("Reset iTerm2 tab color"))
+        return
+
+    # Resolve the color
+    hex_color = resolve_color(color)
+    if hex_color is None:
+        click.echo(
+            style_error(f"Invalid color: '{color}'. Use a preset name or 6-digit hex."),
+            err=True,
+        )
+        click.echo()
+        click.echo("Available presets:")
+        for name in COLOR_PRESETS:
+            click.echo(f"  {name}")
+        sys.exit(1)
+
+    # Create/update workspace file and set iTerm2 color
+    workspace_path = create_workspace_file(cwd, hex_color)
+    set_iterm_tab_color(hex_color)
+
+    preset_name = None
+    for name, val in COLOR_PRESETS.items():
+        if val == hex_color:
+            preset_name = name
+            break
+
+    if preset_name:
+        click.echo(style_success(f"Set color to {preset_name} (#{hex_color})"))
+    else:
+        click.echo(style_success(f"Set color to #{hex_color}"))
+    click.echo(style_dim(f"  Workspace file: {workspace_path.name}"))
+
+
+@cli.command("code")
+@click.argument("name", required=False)
+def code_cmd(name: str | None) -> None:
+    """Open VS Code with the worktree's workspace settings.
+
+    If NAME is provided, opens that worktree. Otherwise uses current directory
+    or shows interactive selection.
+
+    EXAMPLES:
+        wt code             # Open VS Code for current worktree
+        wt code foo         # Open VS Code for worktree 'foo'
+    """
+    repo_root = require_repo()
+
+    if name is None:
+        # Use current directory
+        worktree_path = Path.cwd()
+    else:
+        worktree_path = get_worktree_path(repo_root, name)
+        if not worktree_path.exists():
+            click.echo(
+                style_error(f"Worktree '{name}' not found at {worktree_path}"), err=True
+            )
+            sys.exit(1)
+
+    # Find or create workspace file
+    workspace_file = find_workspace_file(worktree_path)
+    if workspace_file is None:
+        # Create workspace file with random color
+        preset = get_random_preset()
+        hex_color = COLOR_PRESETS[preset]
+        workspace_file = create_workspace_file(worktree_path, hex_color)
+        click.echo(style_info(f"Created workspace file with color: {preset}"))
+
+    # Open VS Code with the workspace file
+    click.echo(style_info(f"Opening VS Code: {workspace_file.name}"))
+    subprocess.run(["code", str(workspace_file)], check=False)
 
 
 # Short aliases for frequently used commands
