@@ -12,6 +12,9 @@ from pathlib import Path
 _HEX_COLOR_LENGTH = 6
 _LUMINANCE_THRESHOLD = 0.5
 
+# Gitignore pattern for workspace files
+WORKSPACE_GITIGNORE_PATTERN = "*.local.code-workspace"
+
 # Color presets matching shell functions
 COLOR_PRESETS: dict[str, str] = {
     "red": "CC3333",
@@ -180,3 +183,53 @@ def _get_branch_from_worktree(worktree_path: Path) -> str:
     if result.returncode == 0:
         return result.stdout.strip()
     return "default"
+
+
+def _get_repo_root(worktree_path: Path) -> Path | None:
+    """Get the repository root from a worktree path."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return Path(result.stdout.strip())
+    return None
+
+
+def is_pattern_in_gitignore(repo_root: Path, pattern: str) -> bool:
+    """Check if a pattern exists in .gitignore."""
+    gitignore_path = repo_root / ".gitignore"
+    if not gitignore_path.exists():
+        return False
+
+    try:
+        content = gitignore_path.read_text()
+        # Check for exact line match (ignoring leading/trailing whitespace)
+        for line in content.splitlines():
+            if line.strip() == pattern:
+                return True
+    except OSError:
+        pass
+
+    return False
+
+
+def add_pattern_to_gitignore(repo_root: Path, pattern: str) -> None:
+    """Append a pattern to .gitignore, creating file if needed."""
+    gitignore_path = repo_root / ".gitignore"
+
+    # Read existing content
+    if gitignore_path.exists():
+        content = gitignore_path.read_text()
+        # Ensure file ends with newline before appending
+        if content and not content.endswith("\n"):
+            content += "\n"
+    else:
+        content = ""
+
+    # Append pattern
+    content += f"{pattern}\n"
+    gitignore_path.write_text(content)

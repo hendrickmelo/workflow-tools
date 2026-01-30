@@ -182,3 +182,63 @@ All features implemented and tested:
 - `wt switch` auto-assigns colors on first switch
 - All 96 tests pass
 - Linting (black, ruff, mypy) passes
+
+---
+
+## Enhancement: Auto-add to .gitignore
+
+### Goal
+When creating a `.local.code-workspace` file, check if the pattern is in `.gitignore`. If not, offer to add it automatically.
+
+### Behavior
+- After creating a workspace file, check if `*.local.code-workspace` is already in `.gitignore`
+- If not found, prompt user: "Add *.local.code-workspace to .gitignore? [Y/n]"
+- If yes, append the pattern to `.gitignore` (create file if needed)
+- Only prompt once per repository (track via presence in .gitignore)
+
+### New Functions in `color.py`
+
+```python
+WORKSPACE_GITIGNORE_PATTERN = "*.local.code-workspace"
+
+def is_pattern_in_gitignore(repo_root: Path, pattern: str) -> bool:
+    """Check if a pattern exists in .gitignore."""
+
+def add_pattern_to_gitignore(repo_root: Path, pattern: str) -> None:
+    """Append a pattern to .gitignore, creating file if needed."""
+
+def ensure_workspace_in_gitignore(repo_root: Path) -> bool:
+    """Check gitignore and prompt to add pattern if missing. Returns True if added."""
+```
+
+### Changes to CLI
+
+Modify places where workspace files are created to call `ensure_workspace_in_gitignore()`:
+
+1. **`color_cmd`** - after `create_workspace_file()`
+2. **`code_cmd`** - after `create_workspace_file()`
+3. **`apply_worktree_color`** - after `create_workspace_file()`
+
+### Implementation Steps
+
+1. Add `WORKSPACE_GITIGNORE_PATTERN` constant to `color.py`
+2. Add `is_pattern_in_gitignore()` function
+3. Add `add_pattern_to_gitignore()` function
+4. Add `ensure_workspace_in_gitignore()` function with prompt
+5. Export new functions from `common/__init__.py`
+6. Update CLI to call `ensure_workspace_in_gitignore()` after creating workspace files
+7. Run `pixi run cleanup`
+8. Reinstall via `uv tool install --reinstall`
+
+### Verification
+
+```bash
+# In a repo without *.local.code-workspace in .gitignore
+wt color blue
+# Should prompt: "Add *.local.code-workspace to .gitignore? [Y/n]"
+# After accepting, check .gitignore contains the pattern
+
+# Run again - should not prompt
+wt color green
+# No prompt (pattern already in .gitignore)
+```

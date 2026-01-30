@@ -15,14 +15,17 @@ from workflow_tools.common import (
     CYAN,
     DIM,
     GREEN,
+    WORKSPACE_GITIGNORE_PATTERN,
     YELLOW,
     ValidationError,
+    add_pattern_to_gitignore,
     create_workspace_file,
     delete_workspace_file,
     find_workspace_file,
     fuzzy_select,
     get_default_branch,
     get_random_preset,
+    is_pattern_in_gitignore,
     list_branches,
     read_workspace_color,
     require_repo,
@@ -538,6 +541,21 @@ def list_cmd() -> None:
         click.echo(f"  {name_styled:30} {branch_styled:40} {path_styled}")
 
 
+def ensure_workspace_in_gitignore(worktree_path: Path) -> None:
+    """Check if workspace pattern is in .gitignore, prompt to add if not."""
+    repo_root = worktree_path  # worktree root is the repo root for gitignore purposes
+
+    if is_pattern_in_gitignore(repo_root, WORKSPACE_GITIGNORE_PATTERN):
+        return
+
+    if click.confirm(
+        style_info(f"Add {WORKSPACE_GITIGNORE_PATTERN} to .gitignore?"),
+        default=True,
+    ):
+        add_pattern_to_gitignore(repo_root, WORKSPACE_GITIGNORE_PATTERN)
+        click.echo(style_success(f"Added {WORKSPACE_GITIGNORE_PATTERN} to .gitignore"))
+
+
 def apply_worktree_color(worktree_path: Path) -> None:
     """Apply color for a worktree, creating workspace file if needed."""
     color_hex = read_workspace_color(worktree_path)
@@ -547,6 +565,7 @@ def apply_worktree_color(worktree_path: Path) -> None:
         color_hex = COLOR_PRESETS[preset]
         create_workspace_file(worktree_path, color_hex)
         click.echo(style_info(f"Assigned color: {preset}"))
+        ensure_workspace_in_gitignore(worktree_path)
     set_iterm_tab_color(color_hex)
 
 
@@ -945,6 +964,8 @@ def color_cmd(color: str | None) -> None:
         click.echo(style_success(f"Set color to #{hex_color}"))
     click.echo(style_dim(f"  Workspace file: {workspace_path.name}"))
 
+    ensure_workspace_in_gitignore(cwd)
+
 
 @cli.command("code")
 @click.argument("name", required=False)
@@ -979,6 +1000,7 @@ def code_cmd(name: str | None) -> None:
         hex_color = COLOR_PRESETS[preset]
         workspace_file = create_workspace_file(worktree_path, hex_color)
         click.echo(style_info(f"Created workspace file with color: {preset}"))
+        ensure_workspace_in_gitignore(worktree_path)
 
     # Open VS Code with the workspace file
     click.echo(style_info(f"Opening VS Code: {workspace_file.name}"))
