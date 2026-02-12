@@ -185,8 +185,14 @@ def prompt_fork_base(repo_root: Path) -> str | None:
     return select_from_menu("Select base branch", all_branches)
 
 
-def select_branch_interactive(repo_root: Path) -> tuple[str, bool] | None:
-    """Interactive branch selection. Returns (branch_name, is_new_branch) or None."""
+def select_branch_interactive(
+    repo_root: Path,
+) -> tuple[str, bool, str | None] | None:
+    """Interactive branch selection.
+
+    Returns (branch_name, is_new_branch, start_point) or None.
+    start_point is set when creating a local branch from a remote ref.
+    """
     branches = list_branches(repo_root)
 
     # Special option at the top
@@ -215,14 +221,41 @@ def select_branch_interactive(repo_root: Path) -> tuple[str, bool] | None:
                     err=True,
                 )
                 return None
-            return (branch_name, False)  # Branch exists now, no need for -b
-        return (branch_name, True)
-    # Return actual branch name
-    return (branches[index - len(special_opts)], False)
+            return (branch_name, False, None)  # Branch exists now, no need for -b
+        return (branch_name, True, None)
+
+    # Handle selected branch (local or remote)
+    selected = branches[index - len(special_opts)]
+    return _resolve_branch_for_worktree(repo_root, selected)
+
+
+def _resolve_branch_for_worktree(
+    repo_root: Path, branch: str
+) -> tuple[str, bool, str | None]:
+    """Resolve a branch name for worktree creation.
+
+    For remote branches (origin/...), returns the local name and sets start_point
+    to the remote ref if no local branch exists yet.
+    """
+    if not branch.startswith("origin/"):
+        return (branch, False, None)
+
+    local_name = branch.removeprefix("origin/")
+    local_exists = run_git(
+        "rev-parse", "--verify", f"refs/heads/{local_name}", cwd=repo_root
+    )
+    if local_exists is not None:
+        return (local_name, False, None)  # Use existing local branch
+    return (local_name, True, branch)  # Create local from remote
 
 
 def create_worktree(
-    repo_root: Path, name: str, branch: str, *, new_branch: bool = False
+    repo_root: Path,
+    name: str,
+    branch: str,
+    *,
+    new_branch: bool = False,
+    start_point: str | None = None,
 ) -> Path | None:
     """Create a worktree. Returns path on success, None on failure."""
     worktree_path = get_worktree_path(repo_root, name)
@@ -241,6 +274,8 @@ def create_worktree(
     args = ["worktree", "add"]
     if new_branch:
         args.extend(["-b", branch, str(worktree_path)])
+        if start_point:
+            args.append(start_point)
     else:
         args.extend([str(worktree_path), branch])
 
@@ -312,26 +347,50 @@ def create(name: str | None, branch: str | None) -> None:
             click.echo(style_error("Name required when using -b flag"), err=True)
             sys.exit(1)
 
-        # Check if branch exists
+        # Check if branch exists locally
         existing = run_git(
             "rev-parse", "--verify", f"refs/heads/{branch}", cwd=repo_root
         )
-        new_branch = existing is None
 
-        if new_branch:
-            # Create from default branch
-            default = get_default_branch(repo_root)
-            git_result = run_git("branch", branch, default, cwd=repo_root)
-            if git_result is None:
-                click.echo(
-                    style_error(f"Failed to create branch '{branch}' from '{default}'"),
-                    err=True,
+        if existing is not None:
+            # Local branch exists, use it directly
+            worktree_path = create_worktree(repo_root, name, branch, new_branch=False)
+        else:
+            # Check for remote tracking branch
+            remote_ref = run_git(
+                "rev-parse",
+                "--verify",
+                f"refs/remotes/origin/{branch}",
+                cwd=repo_root,
+            )
+            if remote_ref is not None:
+                # Create local branch from remote
+                worktree_path = create_worktree(
+                    repo_root,
+                    name,
+                    branch,
+                    new_branch=True,
+                    start_point=f"origin/{branch}",
                 )
-                sys.exit(1)
+            else:
+                # Brand new branch from default
+                default = get_default_branch(repo_root)
+                git_result = run_git("branch", branch, default, cwd=repo_root)
+                if git_result is None:
+                    click.echo(
+                        style_error(
+                            f"Failed to create branch '{branch}' from '{default}'"
+                        ),
+                        err=True,
+                    )
+                    sys.exit(1)
+                worktree_path = create_worktree(
+                    repo_root, name, branch, new_branch=False
+                )
 
-        worktree_path = create_worktree(repo_root, name, branch, new_branch=False)
         if worktree_path:
             output_cd(worktree_path)
+            apply_worktree_color(worktree_path)
     else:
         # Interactive mode
         result = select_branch_interactive(repo_root)
@@ -339,11 +398,11 @@ def create(name: str | None, branch: str | None) -> None:
             click.echo(style_dim("Cancelled."))
             return
 
-        selected_branch, is_new = result
+        selected_branch, is_new, start_point = result
 
         if not name:
             # Suggest name from branch
-            suggested = selected_branch.replace("origin/", "").replace("/", "-")
+            suggested = selected_branch.replace("/", "-")
             name = click.prompt(
                 click.style("  Worktree name", fg=CYAN),
                 default=suggested,
@@ -358,10 +417,15 @@ def create(name: str | None, branch: str | None) -> None:
             return
 
         worktree_path = create_worktree(
-            repo_root, name, selected_branch, new_branch=is_new
+            repo_root,
+            name,
+            selected_branch,
+            new_branch=is_new,
+            start_point=start_point,
         )
         if worktree_path:
             output_cd(worktree_path)
+            apply_worktree_color(worktree_path)
 
 
 @cli.command("pr")
@@ -448,6 +512,7 @@ def pr_cmd(name: str | None) -> None:
     )
     if worktree_path:
         output_cd(worktree_path)
+        apply_worktree_color(worktree_path)
 
 
 @cli.command()
@@ -509,6 +574,7 @@ def fork(branch: str | None) -> None:
 
     if worktree_path:
         output_cd(worktree_path)
+        apply_worktree_color(worktree_path)
 
 
 @cli.command("list")
@@ -662,6 +728,9 @@ def do_remove_worktree(
         # Switch back to main repo if we were in the removed worktree
         if in_removed_worktree:
             output_cd(repo_root)
+            # Apply main repo color (if one was set) or reset iTerm tab
+            main_color = read_workspace_color(repo_root)
+            set_iterm_tab_color(main_color)
         return True
     click.echo(style_error(f"Failed to remove: {result.stderr}"), err=True)
     return False
