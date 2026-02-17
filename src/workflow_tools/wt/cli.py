@@ -11,17 +11,28 @@ from typing import NamedTuple
 import click
 
 from workflow_tools.common import (
+    COLOR_PRESETS,
     CYAN,
     DIM,
     GREEN,
+    WORKSPACE_GITIGNORE_PATTERN,
     YELLOW,
     ValidationError,
+    add_pattern_to_gitignore,
+    create_workspace_file,
+    delete_workspace_file,
+    find_workspace_file,
     fuzzy_select,
     get_default_branch,
+    get_random_preset,
+    is_pattern_in_gitignore,
     list_branches,
+    read_workspace_color,
     require_repo,
+    resolve_color,
     run_git,
     select_from_menu,
+    set_iterm_tab_color,
     style_dim,
     style_error,
     style_info,
@@ -32,6 +43,7 @@ from workflow_tools.common import (
 )
 from workflow_tools.common.git import fetch_origin, is_repo_dirty
 from workflow_tools.common.shell import output_cd as _output_cd
+from workflow_tools.common.shell import output_env
 from workflow_tools.pr.api import list_prs_simple
 
 
@@ -173,8 +185,14 @@ def prompt_fork_base(repo_root: Path) -> str | None:
     return select_from_menu("Select base branch", all_branches)
 
 
-def select_branch_interactive(repo_root: Path) -> tuple[str, bool] | None:
-    """Interactive branch selection. Returns (branch_name, is_new_branch) or None."""
+def select_branch_interactive(
+    repo_root: Path,
+) -> tuple[str, bool, str | None] | None:
+    """Interactive branch selection.
+
+    Returns (branch_name, is_new_branch, start_point) or None.
+    start_point is set when creating a local branch from a remote ref.
+    """
     branches = list_branches(repo_root)
 
     # Special option at the top
@@ -203,14 +221,41 @@ def select_branch_interactive(repo_root: Path) -> tuple[str, bool] | None:
                     err=True,
                 )
                 return None
-            return (branch_name, False)  # Branch exists now, no need for -b
-        return (branch_name, True)
-    # Return actual branch name
-    return (branches[index - len(special_opts)], False)
+            return (branch_name, False, None)  # Branch exists now, no need for -b
+        return (branch_name, True, None)
+
+    # Handle selected branch (local or remote)
+    selected = branches[index - len(special_opts)]
+    return _resolve_branch_for_worktree(repo_root, selected)
+
+
+def _resolve_branch_for_worktree(
+    repo_root: Path, branch: str
+) -> tuple[str, bool, str | None]:
+    """Resolve a branch name for worktree creation.
+
+    For remote branches (origin/...), returns the local name and sets start_point
+    to the remote ref if no local branch exists yet.
+    """
+    if not branch.startswith("origin/"):
+        return (branch, False, None)
+
+    local_name = branch.removeprefix("origin/")
+    local_exists = run_git(
+        "rev-parse", "--verify", f"refs/heads/{local_name}", cwd=repo_root
+    )
+    if local_exists is not None:
+        return (local_name, False, None)  # Use existing local branch
+    return (local_name, True, branch)  # Create local from remote
 
 
 def create_worktree(
-    repo_root: Path, name: str, branch: str, *, new_branch: bool = False
+    repo_root: Path,
+    name: str,
+    branch: str,
+    *,
+    new_branch: bool = False,
+    start_point: str | None = None,
 ) -> Path | None:
     """Create a worktree. Returns path on success, None on failure."""
     worktree_path = get_worktree_path(repo_root, name)
@@ -229,6 +274,8 @@ def create_worktree(
     args = ["worktree", "add"]
     if new_branch:
         args.extend(["-b", branch, str(worktree_path)])
+        if start_point:
+            args.append(start_point)
     else:
         args.extend([str(worktree_path), branch])
 
@@ -300,26 +347,50 @@ def create(name: str | None, branch: str | None) -> None:
             click.echo(style_error("Name required when using -b flag"), err=True)
             sys.exit(1)
 
-        # Check if branch exists
+        # Check if branch exists locally
         existing = run_git(
             "rev-parse", "--verify", f"refs/heads/{branch}", cwd=repo_root
         )
-        new_branch = existing is None
 
-        if new_branch:
-            # Create from default branch
-            default = get_default_branch(repo_root)
-            git_result = run_git("branch", branch, default, cwd=repo_root)
-            if git_result is None:
-                click.echo(
-                    style_error(f"Failed to create branch '{branch}' from '{default}'"),
-                    err=True,
+        if existing is not None:
+            # Local branch exists, use it directly
+            worktree_path = create_worktree(repo_root, name, branch, new_branch=False)
+        else:
+            # Check for remote tracking branch
+            remote_ref = run_git(
+                "rev-parse",
+                "--verify",
+                f"refs/remotes/origin/{branch}",
+                cwd=repo_root,
+            )
+            if remote_ref is not None:
+                # Create local branch from remote
+                worktree_path = create_worktree(
+                    repo_root,
+                    name,
+                    branch,
+                    new_branch=True,
+                    start_point=f"origin/{branch}",
                 )
-                sys.exit(1)
+            else:
+                # Brand new branch from default
+                default = get_default_branch(repo_root)
+                git_result = run_git("branch", branch, default, cwd=repo_root)
+                if git_result is None:
+                    click.echo(
+                        style_error(
+                            f"Failed to create branch '{branch}' from '{default}'"
+                        ),
+                        err=True,
+                    )
+                    sys.exit(1)
+                worktree_path = create_worktree(
+                    repo_root, name, branch, new_branch=False
+                )
 
-        worktree_path = create_worktree(repo_root, name, branch, new_branch=False)
         if worktree_path:
             output_cd(worktree_path)
+            apply_worktree_color(worktree_path)
     else:
         # Interactive mode
         result = select_branch_interactive(repo_root)
@@ -327,11 +398,11 @@ def create(name: str | None, branch: str | None) -> None:
             click.echo(style_dim("Cancelled."))
             return
 
-        selected_branch, is_new = result
+        selected_branch, is_new, start_point = result
 
         if not name:
             # Suggest name from branch
-            suggested = selected_branch.replace("origin/", "").replace("/", "-")
+            suggested = selected_branch.replace("/", "-")
             name = click.prompt(
                 click.style("  Worktree name", fg=CYAN),
                 default=suggested,
@@ -346,10 +417,15 @@ def create(name: str | None, branch: str | None) -> None:
             return
 
         worktree_path = create_worktree(
-            repo_root, name, selected_branch, new_branch=is_new
+            repo_root,
+            name,
+            selected_branch,
+            new_branch=is_new,
+            start_point=start_point,
         )
         if worktree_path:
             output_cd(worktree_path)
+            apply_worktree_color(worktree_path)
 
 
 @cli.command("pr")
@@ -436,6 +512,7 @@ def pr_cmd(name: str | None) -> None:
     )
     if worktree_path:
         output_cd(worktree_path)
+        apply_worktree_color(worktree_path)
 
 
 @cli.command()
@@ -497,6 +574,7 @@ def fork(branch: str | None) -> None:
 
     if worktree_path:
         output_cd(worktree_path)
+        apply_worktree_color(worktree_path)
 
 
 @cli.command("list")
@@ -530,6 +608,41 @@ def list_cmd() -> None:
         click.echo(f"  {name_styled:30} {branch_styled:40} {path_styled}")
 
 
+def ensure_workspace_in_gitignore(worktree_path: Path) -> None:
+    """Check if workspace pattern is in .gitignore, prompt to add if not."""
+    # Check if user already declined this session
+    if os.environ.get("WT_GITIGNORE_SKIP"):
+        return
+
+    repo_root = worktree_path  # worktree root is the repo root for gitignore purposes
+
+    if is_pattern_in_gitignore(repo_root, WORKSPACE_GITIGNORE_PATTERN):
+        return
+
+    if click.confirm(
+        style_info(f"Add {WORKSPACE_GITIGNORE_PATTERN} to .gitignore?"),
+        default=True,
+    ):
+        add_pattern_to_gitignore(repo_root, WORKSPACE_GITIGNORE_PATTERN)
+        click.echo(style_success(f"Added {WORKSPACE_GITIGNORE_PATTERN} to .gitignore"))
+    else:
+        # Remember choice for the rest of this shell session
+        output_env("WT_GITIGNORE_SKIP", "1")
+
+
+def apply_worktree_color(worktree_path: Path) -> None:
+    """Apply color for a worktree, creating workspace file if needed."""
+    color_hex = read_workspace_color(worktree_path)
+    if color_hex is None:
+        # First switch - assign random color
+        preset = get_random_preset()
+        color_hex = COLOR_PRESETS[preset]
+        create_workspace_file(worktree_path, color_hex)
+        click.echo(style_info(f"Assigned color: {preset}"))
+        ensure_workspace_in_gitignore(worktree_path)
+    set_iterm_tab_color(color_hex)
+
+
 @cli.command("switch")
 @click.argument("name", required=False)
 def switch_cmd(name: str | None) -> None:
@@ -553,6 +666,7 @@ def switch_cmd(name: str | None) -> None:
             )
             sys.exit(1)
         output_cd(worktree_path)
+        apply_worktree_color(worktree_path)
         return
 
     # Interactive mode
@@ -577,6 +691,7 @@ def switch_cmd(name: str | None) -> None:
 
     selected = worktrees[index]
     output_cd(selected.path)
+    apply_worktree_color(selected.path)
 
 
 def do_remove_worktree(
@@ -613,6 +728,9 @@ def do_remove_worktree(
         # Switch back to main repo if we were in the removed worktree
         if in_removed_worktree:
             output_cd(repo_root)
+            # Apply main repo color (if one was set) or reset iTerm tab
+            main_color = read_workspace_color(repo_root)
+            set_iterm_tab_color(main_color)
         return True
     click.echo(style_error(f"Failed to remove: {result.stderr}"), err=True)
     return False
@@ -849,6 +967,121 @@ def cleanup() -> None:
                         style_error(f"Failed to delete branch '{branch_to_delete}'"),
                         err=True,
                     )
+
+
+@cli.command("color")
+@click.argument("color", required=False)
+def color_cmd(color: str | None) -> None:
+    """Set worktree color for iTerm2 tab and VS Code workspace.
+
+    COLOR can be a preset (red, green, blue, yellow, orange, purple, pink, cyan),
+    a 6-digit hex code, or 'reset' to clear.
+
+    EXAMPLES:
+        wt color            # Show current color and available presets
+        wt color blue       # Set color to blue preset
+        wt color CC3333     # Set color to custom hex
+        wt color reset      # Reset color (remove workspace file)
+    """
+    cwd = Path.cwd()
+
+    if color is None:
+        # Show current color and usage
+        current_color = read_workspace_color(cwd)
+        if current_color:
+            click.echo(f"Current color: #{current_color}")
+            set_iterm_tab_color(current_color)
+        else:
+            click.echo("No color set for this worktree.")
+
+        click.echo()
+        click.echo("Available presets:")
+        for name, hex_val in COLOR_PRESETS.items():
+            click.echo(f"  {name:10} #{hex_val}")
+        click.echo()
+        click.echo("Usage: wt color <preset|hex|reset>")
+        return
+
+    if color.lower() == "reset":
+        # Reset color - delete workspace file and reset iTerm2
+        if delete_workspace_file(cwd):
+            click.echo(style_success("Removed workspace file"))
+        else:
+            click.echo(style_dim("No workspace file to remove"))
+        set_iterm_tab_color(None)
+        click.echo(style_success("Reset iTerm2 tab color"))
+        return
+
+    # Resolve the color
+    hex_color = resolve_color(color)
+    if hex_color is None:
+        click.echo(
+            style_error(f"Invalid color: '{color}'. Use a preset name or 6-digit hex."),
+            err=True,
+        )
+        click.echo()
+        click.echo("Available presets:")
+        for name in COLOR_PRESETS:
+            click.echo(f"  {name}")
+        sys.exit(1)
+
+    # Create/update workspace file and set iTerm2 color
+    workspace_path = create_workspace_file(cwd, hex_color)
+    set_iterm_tab_color(hex_color)
+
+    preset_name = None
+    for name, val in COLOR_PRESETS.items():
+        if val == hex_color:
+            preset_name = name
+            break
+
+    if preset_name:
+        click.echo(style_success(f"Set color to {preset_name} (#{hex_color})"))
+    else:
+        click.echo(style_success(f"Set color to #{hex_color}"))
+    click.echo(style_dim(f"  Workspace file: {workspace_path.name}"))
+
+    ensure_workspace_in_gitignore(cwd)
+
+
+@cli.command("code")
+@click.argument("name", required=False)
+def code_cmd(name: str | None) -> None:
+    """Open VS Code with the worktree's workspace settings.
+
+    If NAME is provided, opens that worktree. Otherwise uses current directory
+    or shows interactive selection.
+
+    EXAMPLES:
+        wt code             # Open VS Code for current worktree
+        wt code foo         # Open VS Code for worktree 'foo'
+    """
+    repo_root = require_repo()
+
+    if name is None:
+        # Use current directory
+        worktree_path = Path.cwd()
+    else:
+        worktree_path = get_worktree_path(repo_root, name)
+        if not worktree_path.exists():
+            click.echo(
+                style_error(f"Worktree '{name}' not found at {worktree_path}"), err=True
+            )
+            sys.exit(1)
+
+    # Find or create workspace file
+    workspace_file = find_workspace_file(worktree_path)
+    if workspace_file is None:
+        # Create workspace file with random color
+        preset = get_random_preset()
+        hex_color = COLOR_PRESETS[preset]
+        workspace_file = create_workspace_file(worktree_path, hex_color)
+        click.echo(style_info(f"Created workspace file with color: {preset}"))
+        ensure_workspace_in_gitignore(worktree_path)
+
+    # Open VS Code with the workspace file
+    click.echo(style_info(f"Opening VS Code: {workspace_file.name}"))
+    subprocess.run(["code", str(workspace_file)], check=False)
 
 
 # Short aliases for frequently used commands

@@ -132,17 +132,25 @@ def _get_shell_wrapper(shell: str) -> str:
         return f"""
 # workflow-tools shell integration
 export WT_CD_FILE="${{TMPDIR:-/tmp}}/.wt_cd_$$"
+export WT_ENV_FILE="${{TMPDIR:-/tmp}}/.wt_env_$$"
 export RP_CD_FILE="${{TMPDIR:-/tmp}}/.rp_cd_$$"
 
-# wt: worktree management with cd support
+# wt: worktree management with cd and env support
 wt() {{
-    rm -f "$WT_CD_FILE"
+    # Clean up temp files from any previous run
+    rm -f "$WT_CD_FILE" "$WT_ENV_FILE"
+
+    # Run the actual command
     "{binary}" wt "$@"
     local exit_code=$?
-    if [[ -f "$WT_CD_FILE" ]]; then
-        cd "$(cat "$WT_CD_FILE")"
-        rm -f "$WT_CD_FILE"
-    fi
+
+    # Source any env vars the command wants to set in the parent shell
+    # (e.g., WT_GITIGNORE_SKIP to remember user declined gitignore prompt)
+    [[ -f "$WT_ENV_FILE" ]] && source "$WT_ENV_FILE" && rm -f "$WT_ENV_FILE"
+
+    # Change directory if the command requested it (e.g., wt switch)
+    [[ -f "$WT_CD_FILE" ]] && cd "$(cat "$WT_CD_FILE")" && rm -f "$WT_CD_FILE"
+
     return $exit_code
 }}
 
@@ -179,17 +187,25 @@ tm() {{
     return f"""
 # workflow-tools shell integration
 export WT_CD_FILE="${{TMPDIR:-/tmp}}/.wt_cd_$$"
+export WT_ENV_FILE="${{TMPDIR:-/tmp}}/.wt_env_$$"
 export RP_CD_FILE="${{TMPDIR:-/tmp}}/.rp_cd_$$"
 
-# wt: worktree management with cd support
+# wt: worktree management with cd and env support
 wt() {{
-    rm -f "$WT_CD_FILE"
+    # Clean up temp files from any previous run
+    rm -f "$WT_CD_FILE" "$WT_ENV_FILE"
+
+    # Run the actual command
     "{binary}" wt "$@"
     local exit_code=$?
-    if [[ -f "$WT_CD_FILE" ]]; then
-        cd "$(cat "$WT_CD_FILE")"
-        rm -f "$WT_CD_FILE"
-    fi
+
+    # Source any env vars the command wants to set in the parent shell
+    # (e.g., WT_GITIGNORE_SKIP to remember user declined gitignore prompt)
+    [[ -f "$WT_ENV_FILE" ]] && source "$WT_ENV_FILE" && rm -f "$WT_ENV_FILE"
+
+    # Change directory if the command requested it (e.g., wt switch)
+    [[ -f "$WT_CD_FILE" ]] && cd "$(cat "$WT_CD_FILE")" && rm -f "$WT_CD_FILE"
+
     return $exit_code
 }}
 

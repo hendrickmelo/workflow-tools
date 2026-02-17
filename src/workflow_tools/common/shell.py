@@ -36,6 +36,28 @@ def output_cd(path: Path, env_var: str = "WT_CD_FILE") -> None:
     click.echo(f"{CD_MARKER}{path}")
 
 
+def output_env(var: str, value: str, env_var: str = "WT_ENV_FILE") -> None:
+    """Write an export statement to env file for shell wrapper to source.
+
+    Args:
+        var: Environment variable name to export
+        value: Value to set
+        env_var: Environment variable containing the env file path
+    """
+    env_file = os.environ.get(env_var)
+    if env_file:
+        try:
+            env_path = Path(env_file).resolve()
+            temp_dir = Path(tempfile.gettempdir()).resolve()
+            env_path.relative_to(temp_dir)
+            # Append to allow multiple exports
+            with env_path.open("a") as f:
+                f.write(f"export {var}={value}\n")
+        except (ValueError, OSError):
+            # Not in temp dir or write failed - skip silently
+            pass
+
+
 def _osc52_copy(text: str) -> bool:
     """Copy text to clipboard using OSC 52 escape sequence.
 
