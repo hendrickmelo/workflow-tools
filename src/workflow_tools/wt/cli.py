@@ -706,8 +706,13 @@ def do_remove_worktree(
 
     # Check if dirty and prompt if needed
     if not force and is_worktree_dirty(worktree_path):
+        click.echo(style_warn(f"Worktree '{name}' has uncommitted changes:"))
+        status_output = run_git("status", "--short", cwd=worktree_path)
+        if status_output:
+            for line in status_output.splitlines():
+                click.echo(f"  {style_dim(line)}")
         if not click.confirm(
-            style_warn(f"Worktree '{name}' has uncommitted changes. Remove anyway?"),
+            style_warn("Remove anyway?"),
             default=False,
         ):
             click.echo(style_dim("Cancelled."))
