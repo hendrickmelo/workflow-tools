@@ -41,6 +41,7 @@ from workflow_tools.common import (
     validate_pr_number,
     validate_worktree_name,
 )
+from workflow_tools.common.direnv import setup_direnv as _setup_direnv
 from workflow_tools.common.git import fetch_origin, is_repo_dirty
 from workflow_tools.common.shell import output_cd as _output_cd
 from workflow_tools.common.shell import output_env
@@ -50,6 +51,15 @@ from workflow_tools.pr.api import list_prs_simple
 def output_cd(path: Path) -> None:
     """Write path to WT_CD_FILE for shell wrapper."""
     _output_cd(path, env_var="WT_CD_FILE")
+
+
+def setup_worktree_direnv(worktree_path: Path) -> None:
+    """Set up .envrc in a new worktree if an env manager is detected."""
+    result = _setup_direnv(worktree_path)
+    if result.created:
+        click.echo(style_info(f"Created .envrc ({result.manager})"))
+        if not result.direnv_installed:
+            click.echo(style_warn("direnv not installed — .envrc won't auto-activate"))
 
 
 class WorktreeInfo(NamedTuple):
@@ -391,6 +401,7 @@ def create(name: str | None, branch: str | None) -> None:
         if worktree_path:
             output_cd(worktree_path)
             apply_worktree_color(worktree_path)
+            setup_worktree_direnv(worktree_path)
     else:
         # Interactive mode
         result = select_branch_interactive(repo_root)
@@ -426,6 +437,7 @@ def create(name: str | None, branch: str | None) -> None:
         if worktree_path:
             output_cd(worktree_path)
             apply_worktree_color(worktree_path)
+            setup_worktree_direnv(worktree_path)
 
 
 @cli.command("pr")
@@ -513,6 +525,7 @@ def pr_cmd(name: str | None) -> None:
     if worktree_path:
         output_cd(worktree_path)
         apply_worktree_color(worktree_path)
+        setup_worktree_direnv(worktree_path)
 
 
 @cli.command()
@@ -575,6 +588,7 @@ def fork(branch: str | None) -> None:
     if worktree_path:
         output_cd(worktree_path)
         apply_worktree_color(worktree_path)
+        setup_worktree_direnv(worktree_path)
 
 
 @cli.command("list")

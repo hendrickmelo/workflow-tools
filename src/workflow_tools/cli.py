@@ -11,10 +11,13 @@ import click
 
 from workflow_tools.common import (
     copy_to_clipboard,
+    get_direnv_install_hint,
+    setup_direnv,
     style_dim,
     style_error,
     style_info,
     style_success,
+    style_warn,
 )
 from workflow_tools.pr.cli import cli as pr_cli
 from workflow_tools.rp.cli import cli as rp_cli
@@ -248,6 +251,45 @@ def _find_binary() -> str:
     if result.returncode == 0:
         return result.stdout.strip()
     return "workflow-tools"
+
+
+@cli.command()
+@click.option("-f", "--force", is_flag=True, help="Overwrite existing .envrc")
+def direnv(*, force: bool) -> None:
+    """Set up .envrc for the current project (pixi or uv).
+
+    Detects the environment manager, writes .envrc, and runs direnv allow.
+
+    EXAMPLES:
+        workflow-tools direnv          # Auto-detect and set up
+        workflow-tools direnv --force  # Overwrite existing .envrc
+    """
+    result = setup_direnv(Path.cwd(), force=force)
+
+    if not result.created and result.manager is None:
+        click.echo(
+            style_error(
+                "No environment manager detected (no pixi.toml, uv.lock, or pyproject.toml)."
+            ),
+            err=True,
+        )
+        sys.exit(1)
+
+    if not result.created and result.already_exists:
+        click.echo(style_info(".envrc already exists. Use --force to overwrite."))
+        return
+
+    click.echo(style_success(f"Created .envrc for {result.manager}"))
+
+    if not result.direnv_installed:
+        click.echo()
+        click.echo(
+            style_warn(
+                "direnv is not installed. .envrc was created but won't activate automatically."
+            )
+        )
+        click.echo()
+        click.echo(get_direnv_install_hint())
 
 
 GITHUB_REPO = "emmapowers/workflow-tools"
