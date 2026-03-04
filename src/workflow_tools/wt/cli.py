@@ -53,11 +53,21 @@ def output_cd(path: Path) -> None:
     _output_cd(path, env_var="WT_CD_FILE")
 
 
+def _ensure_envrc_in_gitignore(path: Path) -> None:
+    """Prompt to add .envrc to .gitignore if not already there."""
+    if is_pattern_in_gitignore(path, ".envrc"):
+        return
+    if click.confirm(style_info("Add .envrc to .gitignore?"), default=True):
+        add_pattern_to_gitignore(path, ".envrc")
+        click.echo(style_success("Added .envrc to .gitignore"))
+
+
 def setup_worktree_direnv(worktree_path: Path) -> None:
-    """Set up .envrc in a new worktree if an env manager is detected."""
+    """Set up .envrc in a worktree if an env manager is detected."""
     result = _setup_direnv(worktree_path)
     if result.created:
         click.echo(style_info(f"Created .envrc ({result.manager})"))
+        _ensure_envrc_in_gitignore(worktree_path)
         if not result.direnv_installed:
             click.echo(style_warn("direnv not installed — .envrc won't auto-activate"))
 
@@ -681,6 +691,7 @@ def switch_cmd(name: str | None) -> None:
             sys.exit(1)
         output_cd(worktree_path)
         apply_worktree_color(worktree_path)
+        setup_worktree_direnv(worktree_path)
         return
 
     # Interactive mode
@@ -706,6 +717,7 @@ def switch_cmd(name: str | None) -> None:
     selected = worktrees[index]
     output_cd(selected.path)
     apply_worktree_color(selected.path)
+    setup_worktree_direnv(selected.path)
 
 
 def do_remove_worktree(

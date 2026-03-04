@@ -13,7 +13,9 @@ from workflow_tools.common import (
     CYAN,
     DIM,
     ValidationError,
+    add_pattern_to_gitignore,
     fuzzy_select,
+    is_pattern_in_gitignore,
     parse_github_url,
     style_dim,
     style_error,
@@ -22,6 +24,7 @@ from workflow_tools.common import (
     style_warn,
     validate_github_owner,
 )
+from workflow_tools.common.direnv import setup_direnv as _setup_direnv
 from workflow_tools.common.github import run_gh, run_gh_json
 from workflow_tools.common.shell import output_cd as _output_cd
 from workflow_tools.rp.discovery import discover_repos, find_repo
@@ -30,6 +33,25 @@ from workflow_tools.rp.discovery import discover_repos, find_repo
 def output_cd(path: Path) -> None:
     """Write path to RP_CD_FILE for shell wrapper."""
     _output_cd(path, env_var="RP_CD_FILE")
+
+
+def _ensure_envrc_in_gitignore(path: Path) -> None:
+    """Prompt to add .envrc to .gitignore if not already there."""
+    if is_pattern_in_gitignore(path, ".envrc"):
+        return
+    if click.confirm(style_info("Add .envrc to .gitignore?"), default=True):
+        add_pattern_to_gitignore(path, ".envrc")
+        click.echo(style_success("Added .envrc to .gitignore"))
+
+
+def setup_repo_direnv(repo_path: Path) -> None:
+    """Set up .envrc in a repo if an env manager is detected."""
+    result = _setup_direnv(repo_path)
+    if result.created:
+        click.echo(style_info(f"Created .envrc ({result.manager})"))
+        _ensure_envrc_in_gitignore(repo_path)
+        if not result.direnv_installed:
+            click.echo(style_warn("direnv not installed — .envrc won't auto-activate"))
 
 
 def format_repo_options(repos: list[Path]) -> list[str]:
@@ -128,6 +150,7 @@ def switch_cmd(name: str | None) -> None:
             click.echo(style_error(f"Repository '{name}' not found"), err=True)
             sys.exit(1)
         output_cd(repo)
+        setup_repo_direnv(repo)
         return
 
     # Interactive selection
@@ -137,6 +160,7 @@ def switch_cmd(name: str | None) -> None:
         click.echo(style_dim("Cancelled."))
         return
     output_cd(repos[index])
+    setup_repo_direnv(repos[index])
 
 
 @cli.command("list")
@@ -268,6 +292,7 @@ def create(
     if clone_path.exists():
         click.echo(style_success(f"Cloned to {clone_path}"))
         output_cd(clone_path)
+        setup_repo_direnv(clone_path)
     else:
         click.echo(style_error("Clone failed"), err=True)
         sys.exit(1)
@@ -376,6 +401,7 @@ def fork(
     if clone_path.exists():
         click.echo(style_success(f"Cloned to {clone_path}"))
         output_cd(clone_path)
+        setup_repo_direnv(clone_path)
     else:
         click.echo(style_error("Clone failed"), err=True)
         sys.exit(1)
@@ -425,6 +451,7 @@ def clone(repo_name: str | None, path: str | None, *, clone_all: bool) -> None:
             if local_path:
                 click.echo(style_info(f"'{repo_name}' already cloned at {local_path}"))
                 output_cd(local_path)
+                setup_repo_direnv(local_path)
                 return
         repos_to_clone = matching
     else:
@@ -465,6 +492,7 @@ def clone(repo_name: str | None, path: str | None, *, clone_all: bool) -> None:
                 if local_path:
                     click.echo(style_info(f"Already cloned, switching to {local_path}"))
                     output_cd(local_path)
+                    setup_repo_direnv(local_path)
                     return
             repos_to_clone = [selected]
 
@@ -508,6 +536,7 @@ def clone(repo_name: str | None, path: str | None, *, clone_all: bool) -> None:
         clone_path = dest_dir / repos_to_clone[0]["name"]
         if clone_path.exists():
             output_cd(clone_path)
+            setup_repo_direnv(clone_path)
 
 
 @cli.command()
