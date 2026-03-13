@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import click
 from InquirerPy import inquirer
+
+if TYPE_CHECKING:
+    from InquirerPy.prompts.fuzzy import FuzzyPrompt
+    from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 
 # Colors using click.style
 CYAN = "cyan"
@@ -39,6 +45,14 @@ def style_dim(msg: str) -> str:
     return click.style(msg, fg=DIM)
 
 
+def _bind_escape(prompt: FuzzyPrompt) -> None:
+    """Bind the escape key to cancel the prompt (same as Ctrl+C)."""
+
+    @prompt.register_kb("escape")
+    def _handle_escape(event: KeyPressEvent) -> None:
+        prompt._handle_interrupt(event)  # noqa: SLF001
+
+
 def fuzzy_select(options: list[str], message: str) -> int | None:
     """Show fuzzy select menu. Returns index or None if cancelled.
 
@@ -52,6 +66,7 @@ def fuzzy_select(options: list[str], message: str) -> int | None:
             choices=options,
             match_exact=True,  # Substring match gives more predictable results
         )
+        _bind_escape(prompt)
         result = prompt.execute()
         if result is None:
             return None
@@ -68,6 +83,7 @@ def fuzzy_select_multi(options: list[str], message: str) -> list[int] | None:
             choices=options,
             multiselect=True,
         )
+        _bind_escape(prompt)
         result = prompt.execute()
         if result is None:
             return None
